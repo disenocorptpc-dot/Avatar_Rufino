@@ -28,7 +28,7 @@ let enableIdleMotion = true;
 let enableGyroscope = true;
 
 let lastMouseMoveTime = 0;
-const MOUSE_IDLE_TIMEOUT = 2200; // Return to center after 2.2s idle
+const MOUSE_IDLE_TIMEOUT = 2200;
 
 // Mobile Gyroscope State
 let gyroTargetX = 0;
@@ -76,8 +76,10 @@ function initScene() {
     0.1,
     100
   );
-  // Default camera starting position: Torso View
-  camera.position.set(0, 1.1, 1.8);
+  
+  const isMobile = window.innerWidth <= 768;
+  const initialCamDist = isMobile ? 2.1 : 1.8;
+  camera.position.set(0, 1.1, initialCamDist);
 
   renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
   renderer.setSize(window.innerWidth, window.innerHeight);
@@ -120,10 +122,9 @@ function onTouchMove(event) {
   }
 }
 
-// --- Mobile Gyroscope Device Orientation ---
+// --- Mobile Gyroscope Device Orientation (Inverted Values) ---
 function initGyroscope() {
   if (window.DeviceOrientationEvent) {
-    // Check iOS 13+ permission requirement
     if (typeof DeviceOrientationEvent.requestPermission === 'function') {
       const btnReq = document.getElementById('btn-request-gyro');
       if (btnReq) btnReq.style.display = 'block';
@@ -143,12 +144,12 @@ function handleDeviceOrientation(event) {
 
   isGyroActive = true;
 
-  // Center beta around normal reading angle (~45 deg)
   const normBeta = Math.max(-1, Math.min(1, (beta - 45) / 35));
   const normGamma = Math.max(-1, Math.min(1, gamma / 35));
 
-  gyroTargetX = -normBeta * 0.35;
-  gyroTargetY = normGamma * 0.45;
+  // Inverted Gyroscope Axis Mapping for natural tilt response
+  gyroTargetX = normBeta * 0.35;
+  gyroTargetY = -normGamma * 0.45;
   lastMouseMoveTime = performance.now();
 }
 
@@ -267,10 +268,12 @@ function loadAvatar() {
 
       scene.add(avatarModel);
 
-      // Default Camera View: TORSO
+      // Default Torso View (~80% framing on mobile portrait)
+      const isMobile = window.innerWidth <= 768;
       const torsoY = avatarModel.position.y + size.y * 0.55;
       controls.target.set(0, torsoY, 0);
-      camera.position.set(0, torsoY, 1.8);
+      const camDist = isMobile ? 2.1 : 1.8;
+      camera.position.set(0, torsoY, camDist);
       controls.update();
 
       initBlendshapeSliders();
@@ -311,7 +314,7 @@ function setBlendShape(name, value) {
   }
 }
 
-// --- Bone Animations (Head Sway, Mouse/Touch Tracking, Gyroscope & Idle Return) ---
+// --- Bone Animations ---
 function updateBoneAnimations(time, delta) {
   if (!headBone && !neckBone) return;
 
@@ -328,15 +331,12 @@ function updateBoneAnimations(time, delta) {
   const isInputActive = (performance.now() - lastMouseMoveTime) < MOUSE_IDLE_TIMEOUT;
 
   if (enableGyroscope && isGyroActive) {
-    // Gyroscope tracking on mobile devices
     targetHeadRotX = THREE.MathUtils.lerp(targetHeadRotX, gyroTargetX, delta * 3.5);
     targetHeadRotY = THREE.MathUtils.lerp(targetHeadRotY, gyroTargetY, delta * 3.5);
   } else if (enableMouseTracking && isInputActive) {
-    // Mouse / Touch tracking
     targetHeadRotY = THREE.MathUtils.lerp(targetHeadRotY, mouseX * 0.35, delta * 3.5);
     targetHeadRotX = THREE.MathUtils.lerp(targetHeadRotX, -mouseY * 0.25, delta * 3.5);
   } else {
-    // Smooth Return to Center when idle
     targetHeadRotY = THREE.MathUtils.lerp(targetHeadRotY, 0, delta * 2.0);
     targetHeadRotX = THREE.MathUtils.lerp(targetHeadRotX, 0, delta * 2.0);
   }
@@ -622,7 +622,6 @@ function speakText() {
     isSpeakingTTS = true;
     ttsStartTime = performance.now();
 
-    // Auto-collapse panel on mobile when speaking to show 3D avatar
     if (window.innerWidth <= 768) {
       document.getElementById('control-panel').classList.add('collapsed');
     }
@@ -737,10 +736,14 @@ function initBlendshapeSliders() {
 
 // --- Event Listeners Setup ---
 function setupEventListeners() {
-  // Mobile Panel Expand/Collapse Toggle
   const panel = document.getElementById('control-panel');
   const panelHandle = document.getElementById('panel-handle');
   const btnTogglePanel = document.getElementById('btn-toggle-panel');
+
+  // Start mobile panel COLLAPSED on mobile screen load
+  if (window.innerWidth <= 768 && panel) {
+    panel.classList.add('collapsed');
+  }
 
   const togglePanel = () => {
     panel.classList.toggle('collapsed');
@@ -752,7 +755,6 @@ function setupEventListeners() {
     togglePanel();
   });
 
-  // Navigation Tabs
   document.querySelectorAll('.tab-btn').forEach((btn) => {
     btn.addEventListener('click', () => {
       document.querySelectorAll('.tab-btn').forEach((b) => b.classList.remove('active'));
@@ -792,7 +794,6 @@ function setupEventListeners() {
     toggleMicrophone(e.target.checked);
   });
 
-  // Gyroscope Toggle Switch
   const gyroToggle = document.getElementById('gyro-toggle');
   if (gyroToggle) {
     gyroToggle.addEventListener('change', (e) => {
@@ -800,7 +801,6 @@ function setupEventListeners() {
     });
   }
 
-  // iOS Gyroscope Permission Button
   const btnReqGyro = document.getElementById('btn-request-gyro');
   if (btnReqGyro) {
     btnReqGyro.addEventListener('click', async () => {
@@ -810,7 +810,7 @@ function setupEventListeners() {
           if (state === 'granted') {
             window.addEventListener('deviceorientation', handleDeviceOrientation, true);
             btnReqGyro.style.display = 'none';
-            alert('¡Giroscopio activado con éxito!');
+            alert('¡Giroscopio activado!');
           }
         } catch (err) {
           console.error(err);
@@ -889,7 +889,9 @@ function setupEventListeners() {
     const size = box.getSize(new THREE.Vector3());
     const torsoY = avatarModel.position.y + size.y * 0.55;
     controls.target.set(0, torsoY, 0);
-    camera.position.set(0, torsoY, 1.8);
+    const isMobile = window.innerWidth <= 768;
+    const camDist = isMobile ? 2.1 : 1.8;
+    camera.position.set(0, torsoY, camDist);
     controls.update();
   });
 
