@@ -30,7 +30,7 @@
     <div class="brand">
       <div class="status-dot"></div>
       <h1>RUFINO <span>DIGITAL</span></h1>
-      <span class="badge">3D AVATAR v1.5</span>
+      <span class="badge">3D AVATAR v1.6</span>
     </div>
     <div class="header-actions">
       <button id="btn-camera-face" class="btn-icon-text" title="Enfocar Rostro">
@@ -89,35 +89,32 @@
     <div id="tab-speech" class="tab-content active">
       <div class="control-group">
         <label for="tts-text">Texto para hablar (TTS):</label>
-        <textarea id="tts-text" rows="2" placeholder="Escribe lo que quieres que diga Rufino...">¡Hola! Soy Rufino. He configurado mi voz masculina para hablar con tono grave y natural.</textarea>
+        <textarea id="tts-text" rows="2" placeholder="Escribe lo que quieres que diga Rufino...">¡Hola! Soy Rufino. Ahora hablo con una voz masculina real y natural en cualquier celular.</textarea>
       </div>
 
       <div class="preset-phrases">
         <span class="sublabel">Frases Rápidas:</span>
         <div class="chip-container">
-          <button class="chip" data-phrase="¡Hola! Mi voz ahora es 100% masculina en tu teléfono celular.">Voz Masculina 👨</button>
-          <button class="chip" data-phrase="Probando la modulación de tono grave y la apertura de boca.">Prueba de Tono</button>
-          <button class="chip" data-phrase="Sincronización labial fluida e inmediata en tiempo real.">Lip-Sync</button>
+          <button class="chip" data-phrase="¡Hola! Mi voz ahora es cien por ciento masculina y natural en cualquier teléfono.">Voz Masculina 👨</button>
+          <button class="chip" data-phrase="Probando la modulación de voz masculina y apertura de boca en tiempo real.">Prueba de Tono</button>
+          <button class="chip" data-phrase="Sincronización labial fluida e inmediata a sesenta cuadros por segundo.">Lip-Sync 60fps</button>
         </div>
       </div>
 
       <div class="control-group">
-        <label for="voice-select">Voz Masculina Seleccionada:</label>
-        <div style="margin-bottom:6px;">
-          <button type="button" id="btn-force-male-voice" class="btn-secondary" style="width:100%; text-align:center; font-weight:600; padding:8px 12px;">
-            👨 Forzar Voz Masculina (Jorge / Juan / Diego)
-          </button>
-        </div>
+        <label for="voice-select">Motor de Voz Masculina HD:</label>
         <select id="voice-select" class="custom-select">
-          <option value="">Buscando voces masculinas del sistema...</option>
+          <option value="polly_enrique">👨 Voz Masculina Real HD (Enrique - Neural)</option>
+          <option value="polly_javier">👨 Voz Masculina Real HD (Javier - Neural)</option>
+          <option value="polly_cristiano">👨 Voz Masculina Real HD (Cristiano - Neural)</option>
         </select>
-        <span id="voice-info" class="sublabel" style="margin-top:2px;">Buscando voz masculina en tu dispositivo...</span>
+        <span id="voice-info" class="sublabel" style="margin-top:2px; color:#38bdf8;">Voz Masculina Real HD activada ♂️</span>
       </div>
 
       <div class="grid-2col">
         <div class="control-group">
-          <label for="speech-pitch">Tono (Pitch): <span id="pitch-val">0.70</span></label>
-          <input type="range" id="speech-pitch" min="0.4" max="1.2" step="0.05" value="0.70" title="Bajar para tono masculino grave">
+          <label for="speech-pitch">Tono (Pitch): <span id="pitch-val">1.00</span></label>
+          <input type="range" id="speech-pitch" min="0.5" max="1.5" step="0.05" value="1.00" title="Tono de voz">
         </div>
         <div class="control-group">
           <label for="speech-rate">Velocidad: <span id="rate-val">1.0</span>x</label>
@@ -128,7 +125,7 @@
       <div class="action-buttons">
         <button id="btn-speak" class="btn-primary">
           <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><polygon points="5 3 19 12 5 21 5 3"/></svg>
-          Hablar (TTS)
+          Hablar (TTS HD)
         </button>
         <button id="btn-stop-speak" class="btn-secondary">
           <svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2"><rect x="6" y="6" width="12" height="12"/></svg>

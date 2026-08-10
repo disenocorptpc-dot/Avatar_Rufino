@@ -42,6 +42,7 @@ let micStream = null;
 let micSource = null;
 let audioFileSource = null;
 let audioElement = null;
+let ttsAudioSource = null;
 
 let isMicActive = false;
 let isSpeakingTTS = false;
@@ -50,10 +51,6 @@ let isPlayingAudioFile = false;
 // Precise Lip-Sync Variables
 let targetJawOpen = 0;
 let currentJawOpen = 0;
-let ttsWords = [];
-let currentWordIndex = 0;
-let ttsStartTime = 0;
-let ttsEstimatedDurationMs = 0;
 
 // Global Utterance reference to prevent mobile Garbage Collection
 window.currentUtterance = null;
@@ -462,22 +459,13 @@ function handleAudioFileUpload(file) {
   audioElement.play();
 }
 
-// Vowel Weight
-function getVowelWeight(char) {
-  const c = char.toLowerCase();
-  if (['a', 'o', 'á', 'ó'].includes(c)) return 0.85;
-  if (['e', 'é'].includes(c)) return 0.65;
-  if (['i', 'u', 'í', 'ú'].includes(c)) return 0.45;
-  return 0.15;
-}
-
 // Update Lip Sync
 function updateAudioLipSync(time, delta) {
   const canvas = document.getElementById('spectrum-canvas');
   const ctx = canvas.getContext('2d');
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-  if (analyser && (isMicActive || isPlayingAudioFile)) {
+  if (analyser && (isMicActive || isPlayingAudioFile || isSpeakingTTS)) {
     const bufferLength = analyser.frequencyBinCount;
     const dataArray = new Uint8Array(bufferLength);
     analyser.getByteFrequencyData(dataArray);
@@ -502,39 +490,6 @@ function updateAudioLipSync(time, delta) {
       ctx.fillStyle = gradient;
       ctx.fillRect(x, canvas.height - barHeight, barWidth - 1, barHeight);
       x += barWidth;
-    }
-  } else if (isSpeakingTTS) {
-    const elapsed = performance.now() - ttsStartTime;
-
-    if (window.speechSynthesis && window.speechSynthesis.speaking && elapsed < ttsEstimatedDurationMs) {
-      const elapsedSec = elapsed / 1000;
-      const syllablePulse = Math.sin(elapsedSec * 26);
-      const wordEnvelope = Math.abs(Math.sin(elapsedSec * 12));
-      const noise = (Math.random() - 0.5) * 0.15;
-
-      let rawJaw = (syllablePulse * 0.35 + wordEnvelope * 0.45 + 0.2) + noise;
-
-      if (ttsWords.length > 0 && currentWordIndex < ttsWords.length) {
-        const word = ttsWords[currentWordIndex];
-        let maxVowel = 0.5;
-        for (let char of word) {
-          maxVowel = Math.max(maxVowel, getVowelWeight(char));
-        }
-        rawJaw *= maxVowel;
-      }
-
-      targetJawOpen = Math.max(0, Math.min(0.85, rawJaw));
-
-      ctx.fillStyle = '#00f2fe';
-      const numBars = 16;
-      const barW = canvas.width / numBars;
-      for (let i = 0; i < numBars; i++) {
-        const h = Math.abs(Math.sin(time * 12 + i)) * canvas.height * targetJawOpen;
-        ctx.fillRect(i * barW, canvas.height - h, barW - 2, h);
-      }
-    } else {
-      isSpeakingTTS = false;
-      targetJawOpen = 0;
     }
   } else {
     targetJawOpen = 0;
@@ -569,229 +524,79 @@ function updateAudioLipSync(time, delta) {
   }
 }
 
-// --- Bulletproof Mobile Web Speech API Engine ---
-let synth = window.speechSynthesis;
-let voices = [];
-
-const MALE_VOICE_KEYWORDS = [
-  'jorge', 'juan', 'pablo', 'diego', 'carlos', 'miguel', 'mateo', 'pedro', 'raul', 'rodrigo',
-  'male', 'hombre', 'masculin', 'standard-b', 'standard-d', 'x-sfg', 'x-eee', 'x-efg', 'en-us-x-sfg'
-];
-
-const FEMALE_VOICE_KEYWORDS = [
-  'monica', 'paulina', 'marisol', 'soledad', 'francisca', 'helena', 'laura', 'sabina', 'victoria',
-  'marta', 'conchita', 'lucia', 'female', 'mujer', 'standard-a', 'standard-c', 'x-ana'
-];
-
-function isMaleVoice(voice) {
-  const nameLower = voice.name.toLowerCase();
-  const langLower = voice.lang.toLowerCase();
-  
-  for (let kw of FEMALE_VOICE_KEYWORDS) {
-    if (nameLower.includes(kw)) return false;
-  }
-  for (let kw of MALE_VOICE_KEYWORDS) {
-    if (nameLower.includes(kw) || langLower.includes(kw)) return true;
-  }
-  return false;
-}
-
-function findBestMaleVoiceIndex(voiceArray) {
-  if (!voiceArray || voiceArray.length === 0) return -1;
-
-  // First priority: Spanish Male Voice (Jorge, Juan, Diego, Pablo, Carlos, Mateo, etc.)
-  for (let i = 0; i < voiceArray.length; i++) {
-    const v = voiceArray[i];
-    if (v.lang.startsWith('es') && isMaleVoice(v)) {
-      return i;
-    }
-  }
-
-  // Second priority: Any Male Voice
-  for (let i = 0; i < voiceArray.length; i++) {
-    if (isMaleVoice(voiceArray[i])) {
-      return i;
-    }
-  }
-
-  return -1;
-}
-
-function populateVoiceList() {
-  if (!synth) return;
-  voices = synth.getVoices();
-  const select = document.getElementById('voice-select');
-  const infoSpan = document.getElementById('voice-info');
-  if (!select) return;
-
-  select.innerHTML = '';
-
-  if (voices.length === 0) {
-    if (infoSpan) infoSpan.textContent = 'Buscando voces del sistema...';
-    return;
-  }
-
-  const esVoices = voices.filter((v) => v.lang.startsWith('es'));
-  const listToUse = esVoices.length > 0 ? esVoices : voices;
-
-  let defaultMaleGlobalIndex = -1;
-
-  listToUse.forEach((voice) => {
-    const isMale = isMaleVoice(voice);
-    const globalIdx = voices.indexOf(voice);
-
-    const option = document.createElement('option');
-    const genderTag = isMale ? ' ♂️ (Masculina)' : '';
-    option.textContent = `${voice.name} (${voice.lang})${genderTag}`;
-    option.value = globalIdx;
-
-    if (isMale && defaultMaleGlobalIndex === -1) {
-      defaultMaleGlobalIndex = globalIdx;
-    }
-
-    select.appendChild(option);
-  });
-
-  if (defaultMaleGlobalIndex !== -1) {
-    select.value = defaultMaleGlobalIndex;
-    if (infoSpan) infoSpan.textContent = `Voz activa: ${voices[defaultMaleGlobalIndex].name} ♂️`;
-  } else if (select.options.length > 0) {
-    select.selectedIndex = 0;
-    if (infoSpan) infoSpan.textContent = `Voz activa: ${voices[select.value].name} (Tono grave 0.70 aplicado)`;
-  }
-}
-
-if (synth) {
-  populateVoiceList();
-  if (speechSynthesis.onvoiceschanged !== undefined) {
-    speechSynthesis.onvoiceschanged = populateVoiceList;
-  }
-}
-
 // Global Mobile Unlock Handler
-function unlockMobileSpeech() {
-  if (window.speechSynthesis) {
-    window.speechSynthesis.resume();
-  }
+function unlockMobileAudio() {
+  setupAudioContext();
 }
-window.addEventListener('touchstart', unlockMobileSpeech, { passive: true });
-window.addEventListener('click', unlockMobileSpeech, { passive: true });
+window.addEventListener('touchstart', unlockMobileAudio, { passive: true });
+window.addEventListener('click', unlockMobileAudio, { passive: true });
 
-function speakText() {
-  const textInput = document.getElementById('tts-text').value.trim();
-  if (!textInput || !window.speechSynthesis) return;
+// --- High-Definition Amazon Polly Real Male Speech Engine ---
+async function playHDMaleSpeech(text, voiceName = 'Enrique') {
+  setupAudioContext();
 
-  window.speechSynthesis.resume();
+  // Stop any ongoing speech
+  stopSpeech();
 
-  // Re-fetch voices dynamically on touch to capture late-loading voices on iOS/Android
-  if (window.speechSynthesis.getVoices) {
-    const freshVoices = window.speechSynthesis.getVoices();
-    if (freshVoices && freshVoices.length > 0) {
-      voices = freshVoices;
-    }
-  }
+  isSpeakingTTS = true;
 
-  if (voices.length === 0) {
-    populateVoiceList();
-  }
+  const encodedText = encodeURIComponent(text);
+  const audioUrl = `https://api.streamelements.com/kappa/v2/speech?voice=${voiceName}&text=${encodedText}`;
 
-  ttsWords = textInput.split(/\s+/);
-  currentWordIndex = 0;
+  try {
+    const response = await fetch(audioUrl);
+    if (!response.ok) throw new Error(`TTS server error: ${response.status}`);
 
-  const utterance = new SpeechSynthesisUtterance(textInput);
-  window.currentUtterance = utterance; // Prevent Garbage Collection on Mobile!
+    const arrayBuffer = await response.arrayBuffer();
+    const audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
 
-  const select = document.getElementById('voice-select');
-  let selectedIdx = select ? select.value : '';
+    ttsAudioSource = audioCtx.createBufferSource();
+    ttsAudioSource.buffer = audioBuffer;
 
-  // Explicitly search and force a male voice if current selection is not male
-  if (!selectedIdx || !voices[selectedIdx] || !isMaleVoice(voices[selectedIdx])) {
-    const maleIdx = findBestMaleVoiceIndex(voices);
-    if (maleIdx !== -1) {
-      selectedIdx = maleIdx;
-      if (select) select.value = maleIdx;
-    }
-  }
+    ttsAudioSource.connect(analyser);
+    analyser.connect(audioCtx.destination);
 
-  if (voices && voices[selectedIdx]) {
-    try {
-      utterance.voice = voices[selectedIdx];
-      console.log('Using selected voice:', voices[selectedIdx].name);
-    } catch (e) {
-      console.warn('Voice assign warning:', e);
-    }
-  }
+    ttsAudioSource.onended = () => {
+      isSpeakingTTS = false;
+      targetJawOpen = 0;
+      currentJawOpen = 0;
+      setBlendShape('jawOpen', 0);
+    };
 
-  const rateInput = document.getElementById('speech-rate');
-  const pitchInput = document.getElementById('speech-pitch');
-  
-  const rate = rateInput ? parseFloat(rateInput.value) : 1.0;
-  // If selected voice is male, keep pitch natural (0.95); if non-male fallback, pitch shift (0.70)
-  const isSelectedMale = voices[selectedIdx] ? isMaleVoice(voices[selectedIdx]) : false;
-  const pitch = pitchInput ? parseFloat(pitchInput.value) : (isSelectedMale ? 0.95 : 0.70);
-
-  utterance.rate = rate;
-  utterance.pitch = pitch;
-
-  ttsEstimatedDurationMs = (textInput.length * 65) / rate + 200;
-
-  utterance.onstart = () => {
-    isSpeakingTTS = true;
-    ttsStartTime = performance.now();
+    ttsAudioSource.start(0);
 
     if (window.innerWidth <= 768) {
       const panel = document.getElementById('control-panel');
       if (panel) panel.classList.add('collapsed');
     }
-  };
-
-  utterance.onboundary = (event) => {
-    if (event.name === 'word') {
-      currentWordIndex++;
-    }
-  };
-
-  utterance.onend = () => {
-    stopSpeech();
-  };
-
-  utterance.onpause = () => {
-    stopSpeech();
-  };
-
-  utterance.onerror = (e) => {
-    console.error('Speech error:', e);
-    stopSpeech();
-  };
-
-  window.speechSynthesis.speak(utterance);
+  } catch (err) {
+    console.error('HD Male Audio playback error:', err);
+    isSpeakingTTS = false;
+    alert('Error al reproducir la voz. Por favor verifica tu conexión a internet.');
+  }
 }
 
-function forceMaleVoiceSelection() {
-  if (window.speechSynthesis) {
-    const fresh = window.speechSynthesis.getVoices();
-    if (fresh && fresh.length > 0) voices = fresh;
-  }
+function speakText() {
+  const textInput = document.getElementById('tts-text').value.trim();
+  if (!textInput) return;
 
-  populateVoiceList();
-
-  const maleIdx = findBestMaleVoiceIndex(voices);
   const select = document.getElementById('voice-select');
-  const infoSpan = document.getElementById('voice-info');
+  let selectedVoice = select ? select.value : 'polly_enrique';
 
-  if (maleIdx !== -1 && select) {
-    select.value = maleIdx;
-    if (infoSpan) infoSpan.textContent = `Voz masculina activada: ${voices[maleIdx].name} ♂️`;
-    alert(`¡Voz Masculina Activada!\nSe seleccionó "${voices[maleIdx].name}".`);
-  } else {
-    if (infoSpan) infoSpan.textContent = `Se aplicó modulación grave masculina (Pitch 0.70)`;
-    alert(`Nota de Voz en Teléfono:\nSe aplicó la modulación masculina grave (Pitch 0.70).\n\n💡 Tip: Para agregar más voces masculinas nativas en tu celular, ve a los Ajustes de tu teléfono > Accesibilidad > Contenido Leído > Voces y descarga "Jorge" o "Juan".`);
-  }
+  let voiceName = 'Enrique';
+  if (selectedVoice === 'polly_javier') voiceName = 'Javier';
+  else if (selectedVoice === 'polly_cristiano') voiceName = 'Cristiano';
+
+  playHDMaleSpeech(textInput, voiceName);
 }
 
 function stopSpeech() {
-  if (window.speechSynthesis) {
-    window.speechSynthesis.cancel();
+  if (ttsAudioSource) {
+    try {
+      ttsAudioSource.stop();
+      ttsAudioSource.disconnect();
+    } catch (e) {}
+    ttsAudioSource = null;
   }
   if (audioElement) {
     audioElement.pause();
@@ -801,7 +606,6 @@ function stopSpeech() {
   targetJawOpen = 0;
   currentJawOpen = 0;
   setBlendShape('jawOpen', 0);
-  window.currentUtterance = null;
 }
 
 // --- Expression Presets ---
@@ -913,13 +717,6 @@ function setupEventListeners() {
     });
   }
 
-  const btnForceMale = document.getElementById('btn-force-male-voice');
-  if (btnForceMale) {
-    btnForceMale.addEventListener('click', () => {
-      forceMaleVoiceSelection();
-    });
-  }
-
   const btnStop = document.getElementById('btn-stop-speak');
   if (btnStop) {
     btnStop.addEventListener('click', stopSpeech);
@@ -939,12 +736,15 @@ function setupEventListeners() {
 
   const voiceSelect = document.getElementById('voice-select');
   if (voiceSelect) {
-    voiceSelect.addEventListener('focus', populateVoiceList);
     voiceSelect.addEventListener('change', (e) => {
-      const idx = e.target.value;
       const infoSpan = document.getElementById('voice-info');
-      if (voices[idx] && infoSpan) {
-        infoSpan.textContent = `Voz seleccionada: ${voices[idx].name}`;
+      const textMap = {
+        polly_enrique: 'Voz Masculina Real HD (Enrique) activada ♂️',
+        polly_javier: 'Voz Masculina Real HD (Javier) activada ♂️',
+        polly_cristiano: 'Voz Masculina Real HD (Cristiano) activada ♂️'
+      };
+      if (infoSpan && textMap[e.target.value]) {
+        infoSpan.textContent = textMap[e.target.value];
       }
     });
   }
