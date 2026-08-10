@@ -567,28 +567,78 @@ function updateAudioLipSync(time, delta) {
   }
 }
 
-// --- Text-To-Speech (TTS) ---
+// --- Text-To-Speech (TTS) Voice Selection Engine ---
 let synth = window.speechSynthesis;
 let voices = [];
+
+// Keywords identifying MALE voices across desktop & mobile (Android & iOS)
+const MALE_VOICE_KEYWORDS = [
+  'jorge', 'juan', 'pablo', 'diego', 'carlos', 'miguel', 'mateo', 'pedro', 'raul', 'rodrigo',
+  'male', 'hombre', 'masculin', 'standard-b', 'standard-d', 'x-sfg', 'x-eee', 'x-efg', 'en-us-x-sfg'
+];
+
+// Keywords identifying FEMALE voices to deprioritize for Rufino
+const FEMALE_VOICE_KEYWORDS = [
+  'monica', 'paulina', 'marisol', 'soledad', 'francisca', 'helena', 'laura', 'sabina', 'victoria',
+  'marta', 'conchita', 'lucia', 'female', 'mujer', 'standard-a', 'standard-c', 'x-ana'
+];
+
+function isMaleVoice(voice) {
+  const nameLower = voice.name.toLowerCase();
+  const langLower = voice.lang.toLowerCase();
+  
+  // Check explicit female keywords
+  for (let kw of FEMALE_VOICE_KEYWORDS) {
+    if (nameLower.includes(kw)) return false;
+  }
+  
+  // Check explicit male keywords
+  for (let kw of MALE_VOICE_KEYWORDS) {
+    if (nameLower.includes(kw) || langLower.includes(kw)) return true;
+  }
+
+  return false;
+}
 
 function populateVoiceList() {
   if (!synth) return;
   voices = synth.getVoices();
   const select = document.getElementById('voice-select');
+  if (!select) return;
+
   select.innerHTML = '';
+
+  if (voices.length === 0) return;
 
   const esVoices = voices.filter((v) => v.lang.startsWith('es'));
   const listToUse = esVoices.length > 0 ? esVoices : voices;
 
-  listToUse.forEach((voice) => {
+  // Find default male voice
+  let defaultMaleIndex = -1;
+
+  listToUse.forEach((voice, index) => {
+    const isMale = isMaleVoice(voice);
+    const globalIdx = voices.indexOf(voice);
+
     const option = document.createElement('option');
-    option.textContent = `${voice.name} (${voice.lang})`;
-    option.value = voices.indexOf(voice);
-    if (voice.lang.startsWith('es')) {
-      option.selected = true;
+    const genderTag = isMale ? ' ♂️ (Masculina)' : '';
+    option.textContent = `${voice.name} (${voice.lang})${genderTag}`;
+    option.value = globalIdx;
+
+    if (isMale && defaultMaleIndex === -1) {
+      defaultMaleIndex = globalIdx;
     }
+
     select.appendChild(option);
   });
+
+  // Automatically select the male voice if found!
+  if (defaultMaleIndex !== -1) {
+    select.value = defaultMaleIndex;
+    console.log('Selected male voice by default:', voices[defaultMaleIndex].name);
+  } else if (select.options.length > 0) {
+    select.selectedIndex = 0;
+  }
 }
 
 if (synth) {
@@ -604,6 +654,11 @@ function speakText() {
 
   synth.cancel();
 
+  // Ensure voices are populated if Android Chrome loaded late
+  if (voices.length === 0) {
+    populateVoiceList();
+  }
+
   ttsWords = textInput.split(/\s+/);
   currentWordIndex = 0;
 
@@ -611,6 +666,7 @@ function speakText() {
   const voiceIdx = document.getElementById('voice-select').value;
   if (voices[voiceIdx]) {
     utterance.voice = voices[voiceIdx];
+    console.log('Speaking with voice:', voices[voiceIdx].name);
   }
 
   const rate = parseFloat(document.getElementById('speech-rate').value);
@@ -740,7 +796,6 @@ function setupEventListeners() {
   const panelHandle = document.getElementById('panel-handle');
   const btnTogglePanel = document.getElementById('btn-toggle-panel');
 
-  // Start mobile panel COLLAPSED on mobile screen load
   if (window.innerWidth <= 768 && panel) {
     panel.classList.add('collapsed');
   }
@@ -772,6 +827,11 @@ function setupEventListeners() {
   document.getElementById('speech-rate').addEventListener('input', (e) => {
     document.getElementById('rate-val').textContent = e.target.value;
   });
+
+  const voiceSelect = document.getElementById('voice-select');
+  if (voiceSelect) {
+    voiceSelect.addEventListener('focus', populateVoiceList);
+  }
 
   const audioInput = document.getElementById('audio-file-input');
   if (audioInput) {
