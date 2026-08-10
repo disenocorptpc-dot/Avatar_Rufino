@@ -17,13 +17,15 @@ let spineBone = null;
 let initialHeadRot = new THREE.Euler();
 let initialNeckRot = new THREE.Euler();
 
-// Motion Toggles & Mouse State
+// Motion Toggles & Mouse Tracking State
 let mouseX = 0;
 let mouseY = 0;
 let targetHeadRotY = 0;
 let targetHeadRotX = 0;
 let enableMouseTracking = true;
 let enableIdleMotion = true;
+let lastMouseMoveTime = 0;
+const MOUSE_IDLE_TIMEOUT = 2200; // Return to center after 2.2 seconds of mouse inactivity
 
 // Audio & Lip-Sync State
 let audioCtx = null;
@@ -66,7 +68,8 @@ function initScene() {
     0.1,
     100
   );
-  camera.position.set(0, 1.45, 1.2);
+  // Default camera starting position (Torso View)
+  camera.position.set(0, 1.1, 1.8);
 
   renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
   renderer.setSize(window.innerWidth, window.innerHeight);
@@ -80,7 +83,7 @@ function initScene() {
   controls = new OrbitControls(camera, renderer.domElement);
   controls.enableDamping = true;
   controls.dampingFactor = 0.05;
-  controls.target.set(0, 1.4, 0);
+  controls.target.set(0, 1.1, 0);
   controls.maxDistance = 5;
   controls.minDistance = 0.5;
   controls.maxPolarAngle = Math.PI / 2 + 0.1;
@@ -94,6 +97,7 @@ function initScene() {
 function onMouseMove(event) {
   mouseX = (event.clientX / window.innerWidth) * 2 - 1;
   mouseY = -(event.clientY / window.innerHeight) * 2 + 1;
+  lastMouseMoveTime = performance.now(); // Record active mouse movement timestamp
 }
 
 function setupLights() {
@@ -211,9 +215,10 @@ function loadAvatar() {
 
       scene.add(avatarModel);
 
-      const headHeight = avatarModel.position.y + size.y * 0.75;
-      controls.target.set(0, headHeight, 0);
-      camera.position.set(0, headHeight + 0.05, size.y * 0.45);
+      // Default Camera View on Startup: TORSO (Upper Body View)
+      const torsoY = avatarModel.position.y + size.y * 0.55;
+      controls.target.set(0, torsoY, 0);
+      camera.position.set(0, torsoY, 1.8);
       controls.update();
 
       initBlendshapeSliders();
@@ -254,7 +259,7 @@ function setBlendShape(name, value) {
   }
 }
 
-// --- Bone Animations (Head Sway, Mouse Tracking, Speaking Gestures) ---
+// --- Bone Animations (Head Sway, Mouse Tracking, Smooth Idle Return) ---
 function updateBoneAnimations(time, delta) {
   if (!headBone && !neckBone) return;
 
@@ -268,12 +273,16 @@ function updateBoneAnimations(time, delta) {
     idleHeadZ = Math.sin(time * 1.1) * 0.015;
   }
 
-  if (enableMouseTracking) {
-    targetHeadRotY = THREE.MathUtils.lerp(targetHeadRotY, mouseX * 0.35, delta * 4);
-    targetHeadRotX = THREE.MathUtils.lerp(targetHeadRotX, -mouseY * 0.25, delta * 4);
+  // Smart Mouse Tracking: Smoothly return to center when mouse stays still for > 2.2s
+  const isMouseActive = (performance.now() - lastMouseMoveTime) < MOUSE_IDLE_TIMEOUT;
+
+  if (enableMouseTracking && isMouseActive) {
+    targetHeadRotY = THREE.MathUtils.lerp(targetHeadRotY, mouseX * 0.35, delta * 3.5);
+    targetHeadRotX = THREE.MathUtils.lerp(targetHeadRotX, -mouseY * 0.25, delta * 3.5);
   } else {
-    targetHeadRotY = THREE.MathUtils.lerp(targetHeadRotY, 0, delta * 4);
-    targetHeadRotX = THREE.MathUtils.lerp(targetHeadRotX, 0, delta * 4);
+    // Return smoothly to natural front-facing orientation when mouse is stationary
+    targetHeadRotY = THREE.MathUtils.lerp(targetHeadRotY, 0, delta * 2.0);
+    targetHeadRotX = THREE.MathUtils.lerp(targetHeadRotX, 0, delta * 2.0);
   }
 
   let speechNod = 0;
@@ -318,14 +327,14 @@ function updateAutoBlink(delta) {
   }
 }
 
-// --- Zero-Lag Audio Context Setup ---
+// --- Audio Context Setup ---
 function setupAudioContext() {
   if (!audioCtx) {
     const AudioContext = window.AudioContext || window.webkitAudioContext;
     audioCtx = new AudioContext();
     analyser = audioCtx.createAnalyser();
     analyser.fftSize = 512;
-    analyser.smoothingTimeConstant = 0.05; // Zero lag! Instant drop when audio stops!
+    analyser.smoothingTimeConstant = 0.05;
   }
   if (audioCtx.state === 'suspended') {
     audioCtx.resume();
@@ -404,7 +413,7 @@ function getVowelWeight(char) {
   return 0.15;
 }
 
-// Update Lip Sync & Ensure Immediate Close on End
+// Update Lip Sync
 function updateAudioLipSync(time, delta) {
   const canvas = document.getElementById('spectrum-canvas');
   const ctx = canvas.getContext('2d');
@@ -425,7 +434,6 @@ function updateAudioLipSync(time, delta) {
 
     targetJawOpen = Math.min(1, Math.max(0, (avgVoice - 14) / 70));
 
-    // Draw Spectrum Bars
     const barWidth = (canvas.width / bufferLength) * 2;
     let x = 0;
     for (let i = 0; i < bufferLength; i++) {
@@ -440,7 +448,6 @@ function updateAudioLipSync(time, delta) {
   } else if (isSpeakingTTS) {
     const elapsed = performance.now() - ttsStartTime;
 
-    // Check if TTS is still active AND within estimated duration (stops BEFORE audio overruns!)
     if (speechSynthesis.speaking && elapsed < ttsEstimatedDurationMs) {
       const elapsedSec = elapsed / 1000;
       const syllablePulse = Math.sin(elapsedSec * 26);
@@ -460,7 +467,6 @@ function updateAudioLipSync(time, delta) {
 
       targetJawOpen = Math.max(0, Math.min(0.85, rawJaw));
 
-      // Draw simulated spectrum bars
       ctx.fillStyle = '#00f2fe';
       const numBars = 16;
       const barW = canvas.width / numBars;
@@ -469,13 +475,11 @@ function updateAudioLipSync(time, delta) {
         ctx.fillRect(i * barW, canvas.height - h, barW - 2, h);
       }
     } else {
-      // Audio finished or timing reached -> Force target to 0 immediately!
       isSpeakingTTS = false;
       targetJawOpen = 0;
     }
   } else {
     targetJawOpen = 0;
-    // Quiet baseline indicator
     ctx.strokeStyle = 'rgba(255, 255, 255, 0.15)';
     ctx.lineWidth = 2;
     ctx.beginPath();
@@ -484,7 +488,6 @@ function updateAudioLipSync(time, delta) {
     ctx.stroke();
   }
 
-  // AGGRESSIVE DECISION: If target is 0, snap currentJawOpen down sharply! (0 lagging mouth!)
   if (targetJawOpen === 0) {
     currentJawOpen = THREE.MathUtils.lerp(currentJawOpen, 0, delta * 45);
     if (currentJawOpen < 0.02) currentJawOpen = 0;
@@ -495,7 +498,6 @@ function updateAudioLipSync(time, delta) {
 
   setBlendShape('jawOpen', currentJawOpen);
 
-  // Facial Accents
   if (currentJawOpen > 0.4) {
     setBlendShape('browDownLeft', (currentJawOpen - 0.4) * 0.3);
     setBlendShape('browDownRight', (currentJawOpen - 0.4) * 0.3);
@@ -558,8 +560,6 @@ function speakText() {
   const rate = parseFloat(document.getElementById('speech-rate').value);
   utterance.rate = rate;
 
-  // Calculate strict estimated duration so mouth NEVER moves after audio ends!
-  // ~65ms per character adjusted for rate + 150ms buffer
   ttsEstimatedDurationMs = (textInput.length * 65) / rate + 150;
 
   utterance.onstart = () => {
@@ -793,7 +793,7 @@ function setupEventListeners() {
   document.getElementById('btn-screenshot').addEventListener('click', () => {
     renderer.render(scene, camera);
     const dataURL = renderer.domElement.toDataURL('image/png');
-    const link = document.appendLink || document.createElement('a');
+    const link = document.createElement('a');
     link.download = `rufino_avatar_${Date.now()}.png`;
     link.href = dataURL;
     link.click();
