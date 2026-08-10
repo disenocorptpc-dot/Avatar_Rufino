@@ -30,7 +30,7 @@
     <div class="brand">
       <div class="status-dot"></div>
       <h1>RUFINO <span>DIGITAL</span></h1>
-      <span class="badge">3D AVATAR v1.2</span>
+      <span class="badge">3D AVATAR v1.4</span>
     </div>
     <div class="header-actions">
       <button id="btn-camera-face" class="btn-icon-text" title="Enfocar Rostro">
@@ -89,24 +89,30 @@
     <div id="tab-speech" class="tab-content active">
       <div class="control-group">
         <label for="tts-text">Texto para hablar (TTS):</label>
-        <textarea id="tts-text" rows="2" placeholder="Escribe lo que quieres que diga Rufino...">¡Hola! Soy Rufino. Ahora también respondo al giroscopio de tu teléfono celular.</textarea>
+        <textarea id="tts-text" rows="2" placeholder="Escribe lo que quieres que diga Rufino...">¡Hola! Soy Rufino. He ajustado mi tono de voz grave para sonar totalmente masculino en dispositivos móviles.</textarea>
       </div>
 
       <div class="preset-phrases">
         <span class="sublabel">Frases Rápidas:</span>
         <div class="chip-container">
-          <button class="chip" data-phrase="¡Hola a todos! Bienvenidos a esta demostración interactiva en móvil.">Saludo</button>
-          <button class="chip" data-phrase="Inclina tu teléfono celular y verás cómo mi cabeza sigue la orientación del giroscopio.">Giroscopio</button>
+          <button class="chip" data-phrase="¡Hola! Mi voz ahora suena masculina y grave en cualquier teléfono celular.">Voz Masculina</button>
+          <button class="chip" data-phrase="Probando la modulación de tono grave y la apertura de boca.">Prueba de Tono</button>
           <button class="chip" data-phrase="Sincronización labial fluida e inmediata en tiempo real.">Lip-Sync</button>
         </div>
       </div>
 
+      <div class="control-group">
+        <label for="voice-select">Voz TTS Detectada:</label>
+        <select id="voice-select" class="custom-select">
+          <option value="">Cargando voces del sistema...</option>
+        </select>
+        <span id="voice-info" class="sublabel" style="margin-top:2px;">Probando voces masculinas disponibles...</span>
+      </div>
+
       <div class="grid-2col">
         <div class="control-group">
-          <label for="voice-select">Voz TTS:</label>
-          <select id="voice-select" class="custom-select">
-            <option value="">Cargando voces...</option>
-          </select>
+          <label for="speech-pitch">Tono (Pitch): <span id="pitch-val">0.75</span></label>
+          <input type="range" id="speech-pitch" min="0.4" max="1.3" step="0.05" value="0.75" title="Bajar para tono masculino grave">
         </div>
         <div class="control-group">
           <label for="speech-rate">Velocidad: <span id="rate-val">1.0</span>x</label>
@@ -141,7 +147,7 @@
       </div>
 
       <div class="control-group mt-8">
-        <label for="audio-file-input">🎵 Cargar Audio (.mp3 / .wav):</label>
+        <label for="audio-file-input">🎵 Cargar Audio Propio (.mp3 / .wav):</label>
         <input type="file" id="audio-file-input" accept="audio/*" class="custom-file-input">
       </div>
     </div>

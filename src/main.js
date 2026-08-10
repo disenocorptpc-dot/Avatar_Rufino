@@ -122,7 +122,7 @@ function onTouchMove(event) {
   }
 }
 
-// --- Mobile Gyroscope Device Orientation (Inverted Values) ---
+// --- Mobile Gyroscope Device Orientation ---
 function initGyroscope() {
   if (window.DeviceOrientationEvent) {
     if (typeof DeviceOrientationEvent.requestPermission === 'function') {
@@ -137,8 +137,8 @@ function initGyroscope() {
 function handleDeviceOrientation(event) {
   if (!enableGyroscope) return;
 
-  const beta = event.beta;   // Pitch (-180 to 180, resting phone ~45 deg)
-  const gamma = event.gamma; // Roll (-90 to 90)
+  const beta = event.beta;   // Pitch
+  const gamma = event.gamma; // Roll
 
   if (beta === null || gamma === null) return;
 
@@ -268,7 +268,7 @@ function loadAvatar() {
 
       scene.add(avatarModel);
 
-      // Default Torso View (~80% framing on mobile portrait)
+      // Default Torso View
       const isMobile = window.innerWidth <= 768;
       const torsoY = avatarModel.position.y + size.y * 0.55;
       controls.target.set(0, torsoY, 0);
@@ -571,13 +571,11 @@ function updateAudioLipSync(time, delta) {
 let synth = window.speechSynthesis;
 let voices = [];
 
-// Keywords identifying MALE voices across desktop & mobile (Android & iOS)
 const MALE_VOICE_KEYWORDS = [
   'jorge', 'juan', 'pablo', 'diego', 'carlos', 'miguel', 'mateo', 'pedro', 'raul', 'rodrigo',
   'male', 'hombre', 'masculin', 'standard-b', 'standard-d', 'x-sfg', 'x-eee', 'x-efg', 'en-us-x-sfg'
 ];
 
-// Keywords identifying FEMALE voices to deprioritize for Rufino
 const FEMALE_VOICE_KEYWORDS = [
   'monica', 'paulina', 'marisol', 'soledad', 'francisca', 'helena', 'laura', 'sabina', 'victoria',
   'marta', 'conchita', 'lucia', 'female', 'mujer', 'standard-a', 'standard-c', 'x-ana'
@@ -587,12 +585,10 @@ function isMaleVoice(voice) {
   const nameLower = voice.name.toLowerCase();
   const langLower = voice.lang.toLowerCase();
   
-  // Check explicit female keywords
   for (let kw of FEMALE_VOICE_KEYWORDS) {
     if (nameLower.includes(kw)) return false;
   }
   
-  // Check explicit male keywords
   for (let kw of MALE_VOICE_KEYWORDS) {
     if (nameLower.includes(kw) || langLower.includes(kw)) return true;
   }
@@ -604,6 +600,7 @@ function populateVoiceList() {
   if (!synth) return;
   voices = synth.getVoices();
   const select = document.getElementById('voice-select');
+  const infoSpan = document.getElementById('voice-info');
   if (!select) return;
 
   select.innerHTML = '';
@@ -613,7 +610,6 @@ function populateVoiceList() {
   const esVoices = voices.filter((v) => v.lang.startsWith('es'));
   const listToUse = esVoices.length > 0 ? esVoices : voices;
 
-  // Find default male voice
   let defaultMaleIndex = -1;
 
   listToUse.forEach((voice, index) => {
@@ -632,12 +628,12 @@ function populateVoiceList() {
     select.appendChild(option);
   });
 
-  // Automatically select the male voice if found!
   if (defaultMaleIndex !== -1) {
     select.value = defaultMaleIndex;
-    console.log('Selected male voice by default:', voices[defaultMaleIndex].name);
+    if (infoSpan) infoSpan.textContent = `Voz activa: ${voices[defaultMaleIndex].name} ♂️`;
   } else if (select.options.length > 0) {
     select.selectedIndex = 0;
+    if (infoSpan) infoSpan.textContent = `Voz activa: ${voices[select.value].name} (Tono grave 0.75 aplicado)`;
   }
 }
 
@@ -654,7 +650,6 @@ function speakText() {
 
   synth.cancel();
 
-  // Ensure voices are populated if Android Chrome loaded late
   if (voices.length === 0) {
     populateVoiceList();
   }
@@ -666,11 +661,13 @@ function speakText() {
   const voiceIdx = document.getElementById('voice-select').value;
   if (voices[voiceIdx]) {
     utterance.voice = voices[voiceIdx];
-    console.log('Speaking with voice:', voices[voiceIdx].name);
   }
 
   const rate = parseFloat(document.getElementById('speech-rate').value);
+  const pitch = parseFloat(document.getElementById('speech-pitch').value);
+  
   utterance.rate = rate;
+  utterance.pitch = pitch; // Force male baritone pitch shift (0.75) for guaranteed male sound on all mobiles!
 
   ttsEstimatedDurationMs = (textInput.length * 65) / rate + 150;
 
@@ -827,6 +824,14 @@ function setupEventListeners() {
   document.getElementById('speech-rate').addEventListener('input', (e) => {
     document.getElementById('rate-val').textContent = e.target.value;
   });
+
+  const speechPitch = document.getElementById('speech-pitch');
+  if (speechPitch) {
+    speechPitch.addEventListener('input', (e) => {
+      const pVal = parseFloat(e.target.value);
+      document.getElementById('pitch-val').textContent = pVal.toFixed(2);
+    });
+  }
 
   const voiceSelect = document.getElementById('voice-select');
   if (voiceSelect) {
