@@ -42,8 +42,6 @@ let micStream = null;
 let micSource = null;
 let audioFileSource = null;
 let audioElement = null;
-let ttsAudioElement = null;
-let ttsAudioSource = null;
 
 let isMicActive = false;
 let isSpeakingTTS = false;
@@ -124,7 +122,7 @@ function onTouchMove(event) {
   }
 }
 
-// --- Mobile Gyroscope ---
+// --- Mobile Gyroscope Device Orientation ---
 function initGyroscope() {
   if (window.DeviceOrientationEvent) {
     if (typeof DeviceOrientationEvent.requestPermission === 'function') {
@@ -149,6 +147,7 @@ function handleDeviceOrientation(event) {
   const normBeta = Math.max(-1, Math.min(1, (beta - 45) / 35));
   const normGamma = Math.max(-1, Math.min(1, gamma / 35));
 
+  // Inverted Gyroscope Axis Mapping for natural tilt response
   gyroTargetX = normBeta * 0.35;
   gyroTargetY = -normGamma * 0.45;
   lastMouseMoveTime = performance.now();
@@ -461,13 +460,22 @@ function handleAudioFileUpload(file) {
   audioElement.play();
 }
 
+// Vowel Weight
+function getVowelWeight(char) {
+  const c = char.toLowerCase();
+  if (['a', 'o', 'á', 'ó'].includes(c)) return 0.85;
+  if (['e', 'é'].includes(c)) return 0.65;
+  if (['i', 'u', 'í', 'ú'].includes(c)) return 0.45;
+  return 0.15;
+}
+
 // Update Lip Sync
 function updateAudioLipSync(time, delta) {
   const canvas = document.getElementById('spectrum-canvas');
   const ctx = canvas.getContext('2d');
   ctx.clearRect(0, 0, canvas.width, canvas.height);
 
-  if (analyser && (isMicActive || isPlayingAudioFile || isSpeakingTTS)) {
+  if (analyser && (isMicActive || isPlayingAudioFile)) {
     const bufferLength = analyser.frequencyBinCount;
     const dataArray = new Uint8Array(bufferLength);
     analyser.getByteFrequencyData(dataArray);
@@ -492,6 +500,39 @@ function updateAudioLipSync(time, delta) {
       ctx.fillStyle = gradient;
       ctx.fillRect(x, canvas.height - barHeight, barWidth - 1, barHeight);
       x += barWidth;
+    }
+  } else if (isSpeakingTTS) {
+    const elapsed = performance.now() - ttsStartTime;
+
+    if (speechSynthesis.speaking && elapsed < ttsEstimatedDurationMs) {
+      const elapsedSec = elapsed / 1000;
+      const syllablePulse = Math.sin(elapsedSec * 26);
+      const wordEnvelope = Math.abs(Math.sin(elapsedSec * 12));
+      const noise = (Math.random() - 0.5) * 0.15;
+
+      let rawJaw = (syllablePulse * 0.35 + wordEnvelope * 0.45 + 0.2) + noise;
+
+      if (ttsWords.length > 0 && currentWordIndex < ttsWords.length) {
+        const word = ttsWords[currentWordIndex];
+        let maxVowel = 0.5;
+        for (let char of word) {
+          maxVowel = Math.max(maxVowel, getVowelWeight(char));
+        }
+        rawJaw *= maxVowel;
+      }
+
+      targetJawOpen = Math.max(0, Math.min(0.85, rawJaw));
+
+      ctx.fillStyle = '#00f2fe';
+      const numBars = 16;
+      const barW = canvas.width / numBars;
+      for (let i = 0; i < numBars; i++) {
+        const h = Math.abs(Math.sin(time * 12 + i)) * canvas.height * targetJawOpen;
+        ctx.fillRect(i * barW, canvas.height - h, barW - 2, h);
+      }
+    } else {
+      isSpeakingTTS = false;
+      targetJawOpen = 0;
     }
   } else {
     targetJawOpen = 0;
@@ -526,54 +567,7 @@ function updateAudioLipSync(time, delta) {
   }
 }
 
-// --- Real Natural Male Audio Speech Engine ---
-// Solves 100% of mobile TTS voice problems by fetching high-definition Spanish Male Audio
-function playRealMaleSpeech(text) {
-  setupAudioContext();
-
-  if (ttsAudioElement) {
-    ttsAudioElement.pause();
-  }
-
-  const encodedText = encodeURIComponent(text);
-  // High quality natural Spanish Male TTS Stream Endpoint
-  const audioUrl = `https://translate.google.com/translate_tts?ie=UTF-8&q=${encodedText}&tl=es-es&client=tw-ob`;
-
-  ttsAudioElement = new Audio(audioUrl);
-  ttsAudioElement.crossOrigin = 'anonymous';
-
-  if (!ttsAudioSource) {
-    ttsAudioSource = audioCtx.createMediaElementSource(ttsAudioElement);
-    ttsAudioSource.connect(analyser);
-    analyser.connect(audioCtx.destination);
-  }
-
-  ttsAudioElement.onplay = () => {
-    isSpeakingTTS = true;
-    if (window.innerWidth <= 768) {
-      document.getElementById('control-panel').classList.add('collapsed');
-    }
-  };
-
-  ttsAudioElement.onended = () => {
-    isSpeakingTTS = false;
-    targetJawOpen = 0;
-    currentJawOpen = 0;
-    setBlendShape('jawOpen', 0);
-  };
-
-  ttsAudioElement.onerror = (e) => {
-    console.warn('Real Male Audio fetch fallback to Web Speech API:', e);
-    speakWebSpeechFallback(text);
-  };
-
-  ttsAudioElement.play().catch(() => {
-    // If autoplay policy blocks cross-origin fetch, fallback to Web Speech API
-    speakWebSpeechFallback(text);
-  });
-}
-
-// Web Speech API Fallback
+// --- Bulletproof Native Web Speech API Engine ---
 let synth = window.speechSynthesis;
 let voices = [];
 
@@ -609,14 +603,8 @@ function populateVoiceList() {
 
   select.innerHTML = '';
 
-  // Add Default Real Male Voice Engine Option
-  const defaultOption = document.createElement('option');
-  defaultOption.textContent = '🔊 Voz Masculina Natural HD (Google Male)';
-  defaultOption.value = 'real_male_hd';
-  select.appendChild(defaultOption);
-
   if (voices.length === 0) {
-    if (infoSpan) infoSpan.textContent = 'Voz activa: Voz Masculina Natural HD (Recomendada) ♂️';
+    if (infoSpan) infoSpan.textContent = 'Cargando voces del sistema...';
     return;
   }
 
@@ -641,8 +629,13 @@ function populateVoiceList() {
     select.appendChild(option);
   });
 
-  select.value = 'real_male_hd';
-  if (infoSpan) infoSpan.textContent = 'Voz activa: Voz Masculina Natural HD (Recomendada) ♂️';
+  if (defaultMaleIndex !== -1) {
+    select.value = defaultMaleIndex;
+    if (infoSpan) infoSpan.textContent = `Voz activa: ${voices[defaultMaleIndex].name} ♂️`;
+  } else if (select.options.length > 0) {
+    select.selectedIndex = 0;
+    if (infoSpan) infoSpan.textContent = `Voz activa: ${voices[select.value].name}`;
+  }
 }
 
 if (synth) {
@@ -654,31 +647,33 @@ if (synth) {
 
 function speakText() {
   const textInput = document.getElementById('tts-text').value.trim();
-  if (!textInput) return;
+  if (!textInput || !synth) return;
 
-  const voiceVal = document.getElementById('voice-select').value;
-
-  if (voiceVal === 'real_male_hd' || !synth) {
-    // 100% Real Male Audio Engine
-    playRealMaleSpeech(textInput);
-  } else {
-    speakWebSpeechFallback(textInput);
-  }
-}
-
-function speakWebSpeechFallback(textInput) {
-  if (!synth) return;
+  setupAudioContext();
 
   synth.cancel();
 
+  if (voices.length === 0) {
+    populateVoiceList();
+  }
+
+  ttsWords = textInput.split(/\s+/);
+  currentWordIndex = 0;
+
   const utterance = new SpeechSynthesisUtterance(textInput);
   const voiceIdx = document.getElementById('voice-select').value;
+  
   if (voices[voiceIdx]) {
     utterance.voice = voices[voiceIdx];
+    console.log('Speaking with voice:', voices[voiceIdx].name);
   }
 
   const rate = parseFloat(document.getElementById('speech-rate').value);
+  const pitchInput = document.getElementById('speech-pitch');
+  const pitch = pitchInput ? parseFloat(pitchInput.value) : 0.85;
+
   utterance.rate = rate;
+  utterance.pitch = pitch;
 
   ttsEstimatedDurationMs = (textInput.length * 65) / rate + 150;
 
@@ -688,6 +683,12 @@ function speakWebSpeechFallback(textInput) {
 
     if (window.innerWidth <= 768) {
       document.getElementById('control-panel').classList.add('collapsed');
+    }
+  };
+
+  utterance.onboundary = (event) => {
+    if (event.name === 'word') {
+      currentWordIndex++;
     }
   };
 
@@ -713,9 +714,6 @@ function stopSpeech() {
   }
   if (audioElement) {
     audioElement.pause();
-  }
-  if (ttsAudioElement) {
-    ttsAudioElement.pause();
   }
   isSpeakingTTS = false;
   isPlayingAudioFile = false;
@@ -826,16 +824,35 @@ function setupEventListeners() {
     });
   });
 
-  document.getElementById('btn-speak').addEventListener('click', speakText);
+  document.getElementById('btn-speak').addEventListener('click', () => {
+    setupAudioContext();
+    speakText();
+  });
+  
   document.getElementById('btn-stop-speak').addEventListener('click', stopSpeech);
 
   document.getElementById('speech-rate').addEventListener('input', (e) => {
     document.getElementById('rate-val').textContent = e.target.value;
   });
 
+  const speechPitch = document.getElementById('speech-pitch');
+  if (speechPitch) {
+    speechPitch.addEventListener('input', (e) => {
+      const pVal = parseFloat(e.target.value);
+      document.getElementById('pitch-val').textContent = pVal.toFixed(2);
+    });
+  }
+
   const voiceSelect = document.getElementById('voice-select');
   if (voiceSelect) {
     voiceSelect.addEventListener('focus', populateVoiceList);
+    voiceSelect.addEventListener('change', (e) => {
+      const idx = e.target.value;
+      const infoSpan = document.getElementById('voice-info');
+      if (voices[idx] && infoSpan) {
+        infoSpan.textContent = `Voz seleccionada: ${voices[idx].name}`;
+      }
+    });
   }
 
   const audioInput = document.getElementById('audio-file-input');
@@ -851,6 +868,7 @@ function setupEventListeners() {
   document.querySelectorAll('.chip').forEach((chip) => {
     chip.addEventListener('click', () => {
       document.getElementById('tts-text').value = chip.getAttribute('data-phrase');
+      setupAudioContext();
       speakText();
     });
   });
