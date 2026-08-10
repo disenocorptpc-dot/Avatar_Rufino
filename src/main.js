@@ -43,6 +43,7 @@ let micSource = null;
 let audioFileSource = null;
 let audioElement = null;
 let ttsAudioSource = null;
+let ttsAudioElement = null;
 
 let isMicActive = false;
 let isSpeakingTTS = false;
@@ -51,6 +52,10 @@ let isPlayingAudioFile = false;
 // Precise Lip-Sync Variables
 let targetJawOpen = 0;
 let currentJawOpen = 0;
+let ttsWords = [];
+let currentWordIndex = 0;
+let ttsStartTime = 0;
+let ttsEstimatedDurationMs = 0;
 
 // Global Utterance reference to prevent mobile Garbage Collection
 window.currentUtterance = null;
@@ -459,6 +464,15 @@ function handleAudioFileUpload(file) {
   audioElement.play();
 }
 
+// Vowel Weight
+function getVowelWeight(char) {
+  const c = char.toLowerCase();
+  if (['a', 'o', 'á', 'ó'].includes(c)) return 0.85;
+  if (['e', 'é'].includes(c)) return 0.65;
+  if (['i', 'u', 'í', 'ú'].includes(c)) return 0.45;
+  return 0.15;
+}
+
 // Update Lip Sync
 function updateAudioLipSync(time, delta) {
   const canvas = document.getElementById('spectrum-canvas');
@@ -531,49 +545,117 @@ function unlockMobileAudio() {
 window.addEventListener('touchstart', unlockMobileAudio, { passive: true });
 window.addEventListener('click', unlockMobileAudio, { passive: true });
 
-// --- High-Definition Amazon Polly Real Male Speech Engine ---
+// --- Multi-Engine Bulletproof Male TTS Speech Engine ---
 async function playHDMaleSpeech(text, voiceName = 'Enrique') {
   setupAudioContext();
-
-  // Stop any ongoing speech
   stopSpeech();
 
   isSpeakingTTS = true;
 
+  if (window.innerWidth <= 768) {
+    const panel = document.getElementById('control-panel');
+    if (panel) panel.classList.add('collapsed');
+  }
+
   const encodedText = encodeURIComponent(text);
-  const audioUrl = `https://api.streamelements.com/kappa/v2/speech?voice=${voiceName}&text=${encodedText}`;
+
+  // Engine 1: StreamElements Amazon Polly Neural Male (Enrique/Javier/Cristiano)
+  const pollyUrl = `https://api.streamelements.com/kappa/v2/speech?voice=${voiceName}&text=${encodedText}`;
 
   try {
-    const response = await fetch(audioUrl);
-    if (!response.ok) throw new Error(`TTS server error: ${response.status}`);
+    const response = await fetch(pollyUrl);
+    if (response.ok) {
+      const arrayBuffer = await response.arrayBuffer();
+      const audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
 
-    const arrayBuffer = await response.arrayBuffer();
-    const audioBuffer = await audioCtx.decodeAudioData(arrayBuffer);
+      ttsAudioSource = audioCtx.createBufferSource();
+      ttsAudioSource.buffer = audioBuffer;
 
-    ttsAudioSource = audioCtx.createBufferSource();
-    ttsAudioSource.buffer = audioBuffer;
+      ttsAudioSource.connect(analyser);
+      analyser.connect(audioCtx.destination);
 
-    ttsAudioSource.connect(analyser);
-    analyser.connect(audioCtx.destination);
+      ttsAudioSource.onended = () => {
+        isSpeakingTTS = false;
+        targetJawOpen = 0;
+        currentJawOpen = 0;
+        setBlendShape('jawOpen', 0);
+      };
 
-    ttsAudioSource.onended = () => {
+      ttsAudioSource.start(0);
+      return;
+    }
+  } catch (err) {
+    console.warn('StreamElements TTS failed, switching to Audio Element Fallback...', err);
+  }
+
+  // Engine 2: Fallback Audio Element Stream
+  try {
+    if (ttsAudioElement) {
+      ttsAudioElement.pause();
+    }
+    const fallbackUrl = `https://translate.google.com/translate_tts?ie=UTF-8&q=${encodedText}&tl=es&client=tw-ob`;
+    ttsAudioElement = new Audio(fallbackUrl);
+
+    ttsAudioElement.onplay = () => {
+      isSpeakingTTS = true;
+    };
+    ttsAudioElement.onended = () => {
       isSpeakingTTS = false;
       targetJawOpen = 0;
       currentJawOpen = 0;
       setBlendShape('jawOpen', 0);
     };
+    ttsAudioElement.onerror = () => {
+      playNativeWebSpeechFallback(text);
+    };
 
-    ttsAudioSource.start(0);
-
-    if (window.innerWidth <= 768) {
-      const panel = document.getElementById('control-panel');
-      if (panel) panel.classList.add('collapsed');
-    }
+    await ttsAudioElement.play();
+    return;
   } catch (err) {
-    console.error('HD Male Audio playback error:', err);
-    isSpeakingTTS = false;
-    alert('Error al reproducir la voz. Por favor verifica tu conexión a internet.');
+    console.warn('Audio Element fallback failed, switching to Native Web Speech...', err);
   }
+
+  // Engine 3: Native Web Speech API Fallback with Baritone Pitch Shift
+  playNativeWebSpeechFallback(text);
+}
+
+function playNativeWebSpeechFallback(text) {
+  if (!window.speechSynthesis) {
+    isSpeakingTTS = false;
+    return;
+  }
+
+  window.speechSynthesis.cancel();
+  window.speechSynthesis.resume();
+
+  const utterance = new SpeechSynthesisUtterance(text);
+  window.currentUtterance = utterance;
+
+  const rateInput = document.getElementById('speech-rate');
+  const pitchInput = document.getElementById('speech-pitch');
+  
+  utterance.rate = rateInput ? parseFloat(rateInput.value) : 1.0;
+  // Apply baritone pitch shift (0.70) so native fallback sounds masculine!
+  utterance.pitch = pitchInput ? parseFloat(pitchInput.value) : 0.70;
+
+  ttsWords = text.split(/\s+/);
+  currentWordIndex = 0;
+  ttsEstimatedDurationMs = (text.length * 65) / utterance.rate + 200;
+
+  utterance.onstart = () => {
+    isSpeakingTTS = true;
+    ttsStartTime = performance.now();
+  };
+
+  utterance.onend = () => {
+    stopSpeech();
+  };
+
+  utterance.onerror = () => {
+    stopSpeech();
+  };
+
+  window.speechSynthesis.speak(utterance);
 }
 
 function speakText() {
@@ -598,14 +680,22 @@ function stopSpeech() {
     } catch (e) {}
     ttsAudioSource = null;
   }
+  if (ttsAudioElement) {
+    ttsAudioElement.pause();
+    ttsAudioElement = null;
+  }
   if (audioElement) {
     audioElement.pause();
+  }
+  if (window.speechSynthesis) {
+    window.speechSynthesis.cancel();
   }
   isSpeakingTTS = false;
   isPlayingAudioFile = false;
   targetJawOpen = 0;
   currentJawOpen = 0;
   setBlendShape('jawOpen', 0);
+  window.currentUtterance = null;
 }
 
 // --- Expression Presets ---
