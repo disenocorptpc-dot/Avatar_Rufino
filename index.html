@@ -8,6 +8,7 @@
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
   <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
   <link rel="stylesheet" href="./style.css">
+  <script src="https://js.puter.com/v2/"></script>
 </head>
 <body>
   <!-- 3D Canvas Container -->
@@ -30,7 +31,7 @@
     <div class="brand">
       <div class="status-dot"></div>
       <h1>RUFINO <span>DIGITAL</span></h1>
-      <span class="badge">3D AVATAR v1.7</span>
+      <span class="badge">3D AVATAR v2.0 — AI Voice</span>
     </div>
     <div class="header-actions">
       <button id="btn-camera-face" class="btn-icon-text" title="Enfocar Rostro">
@@ -89,34 +90,42 @@
     <div id="tab-speech" class="tab-content active">
       <div class="control-group">
         <label for="tts-text">Texto para hablar (TTS):</label>
-        <textarea id="tts-text" rows="2" placeholder="Escribe lo que quieres que diga Rufino...">¡Hola! Soy Rufino. He activado mi voz masculina nativa con modulación grave de tono.</textarea>
+        <textarea id="tts-text" rows="2" placeholder="Escribe lo que quieres que diga Rufino...">¡Hola! Soy Rufino. Ahora hablo con voz masculina real generada por inteligencia artificial.</textarea>
       </div>
 
       <div class="preset-phrases">
         <span class="sublabel">Frases Rápidas:</span>
         <div class="chip-container">
-          <button class="chip" data-phrase="¡Hola! Mi voz ahora es cien por ciento masculina y fluida en cualquier teléfono.">Voz Masculina 👨</button>
-          <button class="chip" data-phrase="Probando la modulación de voz masculina y apertura de boca en tiempo real.">Prueba de Tono</button>
+          <button class="chip" data-phrase="¡Hola! Soy Rufino. Mi voz ahora es cien por ciento masculina gracias a inteligencia artificial.">Voz AI Masculina 🤖</button>
+          <button class="chip" data-phrase="Probando la voz masculina real de Rufino y la apertura de boca en tiempo real.">Prueba de Voz</button>
           <button class="chip" data-phrase="Sincronización labial fluida e inmediata a sesenta cuadros por segundo.">Lip-Sync 60fps</button>
         </div>
       </div>
 
       <div class="control-group">
-        <label for="voice-select">Selección de Voz TTS:</label>
+        <label for="voice-engine-select">Motor de Voz:</label>
+        <select id="voice-engine-select" class="custom-select">
+          <option value="puter-ai" selected>🤖 Puter AI — Voz Masculina Real (OpenAI Onyx)</option>
+          <option value="web-speech">🌐 Web Speech API (Voces del Sistema)</option>
+        </select>
+        <span id="voice-info" class="sublabel" style="margin-top:2px; color:#38bdf8;">🤖 Motor AI activo — Voz masculina real en TODOS los dispositivos ♂️</span>
+      </div>
+
+      <div id="web-speech-options" class="control-group" style="display:none;">
+        <label for="voice-select">Voz del Sistema:</label>
         <select id="voice-select" class="custom-select">
           <option value="">Cargando voces disponibles...</option>
         </select>
-        <span id="voice-info" class="sublabel" style="margin-top:2px; color:#38bdf8;">Configuración de Voz Masculina Lista ♂️</span>
       </div>
 
       <div class="grid-2col">
         <div class="control-group">
-          <label for="speech-pitch">Tono (Pitch): <span id="pitch-val">0.65</span></label>
-          <input type="range" id="speech-pitch" min="0.35" max="1.3" step="0.05" value="0.65" title="Bajar para voz de hombre más grave">
-        </div>
-        <div class="control-group">
           <label for="speech-rate">Velocidad: <span id="rate-val">1.0</span>x</label>
           <input type="range" id="speech-rate" min="0.5" max="1.5" step="0.1" value="1.0">
+        </div>
+        <div class="control-group" id="pitch-group" style="display:none;">
+          <label for="speech-pitch">Tono (Pitch): <span id="pitch-val">0.65</span></label>
+          <input type="range" id="speech-pitch" min="0.35" max="1.3" step="0.05" value="0.65" title="Bajar para voz de hombre más grave">
         </div>
       </div>
 

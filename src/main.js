@@ -578,8 +578,11 @@ function unlockMobileAudio() {
 window.addEventListener('touchstart', unlockMobileAudio, { passive: true });
 window.addEventListener('click', unlockMobileAudio, { passive: true });
 
-// --- Synchronous Bulletproof Web Speech Engine ---
+// --- Dual-Engine TTS: Puter.js AI Voice (Primary) + Web Speech API (Fallback) ---
 let voices = [];
+let currentVoiceEngine = 'puter-ai'; // 'puter-ai' or 'web-speech'
+let puterAudioElement = null; // Audio element for Puter.js AI voice
+let puterAudioSource = null; // MediaElementSource for lip-sync
 
 const MALE_KEYWORDS = [
   'jorge', 'juan', 'pablo', 'diego', 'carlos', 'miguel', 'mateo', 'pedro', 'raul', 'rodrigo',
@@ -609,17 +612,15 @@ function populateVoiceList() {
   if (!window.speechSynthesis) return;
   voices = window.speechSynthesis.getVoices();
   const select = document.getElementById('voice-select');
-  const infoSpan = document.getElementById('voice-info');
   if (!select) return;
 
   select.innerHTML = '';
 
   if (voices.length === 0) {
     const opt = document.createElement('option');
-    opt.textContent = '🔊 Voz Masculina Rufino (Pitch Grave 0.65)';
+    opt.textContent = '🔊 Voz del Sistema (predeterminada)';
     opt.value = 'default_male';
     select.appendChild(opt);
-    if (infoSpan) infoSpan.textContent = 'Voz Masculina Grave Activada ♂️';
     return;
   }
 
@@ -646,10 +647,8 @@ function populateVoiceList() {
 
   if (defaultMaleIndex !== -1) {
     select.value = defaultMaleIndex;
-    if (infoSpan) infoSpan.textContent = `Voz activa: ${voices[defaultMaleIndex].name} ♂️`;
   } else if (select.options.length > 0) {
     select.selectedIndex = 0;
-    if (infoSpan) infoSpan.textContent = `Voz activa: ${voices[select.value].name} (Tono grave 0.65 aplicado)`;
   }
 }
 
@@ -660,19 +659,122 @@ if (window.speechSynthesis) {
   }
 }
 
-function speakText() {
-  const textInput = document.getElementById('tts-text').value.trim();
-  if (!textInput || !window.speechSynthesis) return;
+// --- Puter.js AI Voice Engine (Primary) ---
+async function speakWithPuterAI(text) {
+  setupAudioContext();
 
-  // Unmute & Resume Speech Engine
+  const infoSpan = document.getElementById('voice-info');
+  if (infoSpan) infoSpan.textContent = '🤖 Generando voz AI masculina...';
+
+  // Collapse panel on mobile
+  if (window.innerWidth <= 768) {
+    const panel = document.getElementById('control-panel');
+    if (panel) panel.classList.add('collapsed');
+  }
+
+  // Start lip-sync simulation immediately for responsiveness
+  ttsWords = text.split(/\s+/);
+  currentWordIndex = 0;
+  const rateInput = document.getElementById('speech-rate');
+  const rate = rateInput ? parseFloat(rateInput.value) : 1.0;
+  ttsEstimatedDurationMs = (text.length * 65) / rate + 500;
+  isSpeakingTTS = true;
+  ttsStartTime = performance.now();
+
+  try {
+    // Call Puter.js AI TTS with OpenAI 'onyx' male voice
+    const audioBlob = await puter.ai.txt2speech(text, {
+      voice: 'onyx',
+      model: 'tts-1',
+      response_format: 'mp3'
+    });
+
+    // Convert the result to a playable audio element
+    let audioUrl;
+    if (audioBlob instanceof Blob) {
+      audioUrl = URL.createObjectURL(audioBlob);
+    } else if (audioBlob instanceof Audio || audioBlob instanceof HTMLAudioElement) {
+      // Puter.js may return an Audio element directly
+      puterAudioElement = audioBlob;
+      connectPuterAudioToLipSync(puterAudioElement);
+      puterAudioElement.play();
+      if (infoSpan) infoSpan.textContent = '🤖 Hablando con voz AI masculina (Onyx) ♂️';
+      return;
+    } else if (typeof audioBlob === 'string') {
+      audioUrl = audioBlob;
+    } else {
+      // Try to extract URL or blob from unknown result type
+      audioUrl = URL.createObjectURL(new Blob([audioBlob], { type: 'audio/mpeg' }));
+    }
+
+    // Create and configure audio element
+    if (puterAudioElement) {
+      puterAudioElement.pause();
+      puterAudioElement.src = '';
+    }
+    puterAudioElement = new Audio(audioUrl);
+    connectPuterAudioToLipSync(puterAudioElement);
+    await puterAudioElement.play();
+
+    if (infoSpan) infoSpan.textContent = '🤖 Hablando con voz AI masculina (Onyx) ♂️';
+
+  } catch (err) {
+    console.warn('Puter.js AI voice failed, falling back to Web Speech API:', err);
+    if (infoSpan) infoSpan.textContent = '⚠️ AI Voice no disponible — usando voz del sistema';
+    
+    // Fallback to Web Speech API
+    isSpeakingTTS = false;
+    speakWithWebSpeech(text);
+  }
+}
+
+function connectPuterAudioToLipSync(audioEl) {
+  setupAudioContext();
+
+  // Connect to AudioContext analyser for frame-accurate lip sync
+  if (!puterAudioSource) {
+    try {
+      puterAudioSource = audioCtx.createMediaElementSource(audioEl);
+      puterAudioSource.connect(analyser);
+      analyser.connect(audioCtx.destination);
+    } catch (e) {
+      // If already connected or CORS issue, use fallback lip-sync
+      console.warn('Could not connect AI audio to analyser:', e);
+    }
+  }
+
+  audioEl.onplay = () => {
+    isPlayingAudioFile = true;
+    isSpeakingTTS = false; // Switch from simulated to real audio lip-sync
+  };
+
+  audioEl.onended = () => {
+    isPlayingAudioFile = false;
+    isSpeakingTTS = false;
+    targetJawOpen = 0;
+    currentJawOpen = 0;
+    setBlendShape('jawOpen', 0);
+    const infoSpan = document.getElementById('voice-info');
+    if (infoSpan) infoSpan.textContent = '🤖 Motor AI activo — Voz masculina real en TODOS los dispositivos ♂️';
+  };
+
+  audioEl.onerror = () => {
+    isPlayingAudioFile = false;
+    isSpeakingTTS = false;
+    targetJawOpen = 0;
+  };
+}
+
+// --- Web Speech API Engine (Fallback) ---
+function speakWithWebSpeech(text) {
+  if (!window.speechSynthesis) return;
+
   window.speechSynthesis.cancel();
   window.speechSynthesis.resume();
 
-  // Create Utterance SYNCHRONOUSLY inside touch/click event tick
-  const utterance = new SpeechSynthesisUtterance(textInput);
-  window.currentUtterance = utterance; // Prevent Mobile Garbage Collection!
+  const utterance = new SpeechSynthesisUtterance(text);
+  window.currentUtterance = utterance;
 
-  // Re-populate voices synchronously if array is empty
   let currentVoices = window.speechSynthesis.getVoices();
   if (!currentVoices || currentVoices.length === 0) {
     currentVoices = voices;
@@ -688,7 +790,6 @@ function speakText() {
     selectedVoice = currentVoices[selectedIdx];
     isSelectedVoiceMale = isMaleVoice(selectedVoice);
   } else if (currentVoices && currentVoices.length > 0) {
-    // Auto-search for first male voice in list
     for (let v of currentVoices) {
       if (isMaleVoice(v)) {
         selectedVoice = v;
@@ -699,30 +800,25 @@ function speakText() {
   }
 
   if (selectedVoice) {
-    try {
-      utterance.voice = selectedVoice;
-    } catch (e) {}
+    try { utterance.voice = selectedVoice; } catch (e) {}
   }
 
   const rateInput = document.getElementById('speech-rate');
   const pitchInput = document.getElementById('speech-pitch');
-  
   const rate = rateInput ? parseFloat(rateInput.value) : 1.0;
-  // If selected voice is male, pitch is 0.95; if non-male fallback, pitch shift to deep baritone (0.65)
   const userPitch = pitchInput ? parseFloat(pitchInput.value) : 0.65;
   const pitch = isSelectedVoiceMale ? Math.min(userPitch, 0.95) : 0.65;
 
   utterance.rate = rate;
   utterance.pitch = pitch;
 
-  ttsWords = textInput.split(/\s+/);
+  ttsWords = text.split(/\s+/);
   currentWordIndex = 0;
-  ttsEstimatedDurationMs = (textInput.length * 65) / rate + 200;
+  ttsEstimatedDurationMs = (text.length * 65) / rate + 200;
 
   utterance.onstart = () => {
     isSpeakingTTS = true;
     ttsStartTime = performance.now();
-
     if (window.innerWidth <= 768) {
       const panel = document.getElementById('control-panel');
       if (panel) panel.classList.add('collapsed');
@@ -730,28 +826,47 @@ function speakText() {
   };
 
   utterance.onboundary = (event) => {
-    if (event.name === 'word') {
-      currentWordIndex++;
-    }
+    if (event.name === 'word') currentWordIndex++;
   };
 
-  utterance.onend = () => {
-    stopSpeech();
-  };
-
+  utterance.onend = () => stopSpeech();
   utterance.onerror = (e) => {
     console.error('Speech synthesis error:', e);
     stopSpeech();
   };
 
-  // Synchronous speak call inside direct user gesture tick
   window.speechSynthesis.speak(utterance);
 }
 
+// --- Main speakText dispatcher ---
+function speakText() {
+  const textInput = document.getElementById('tts-text').value.trim();
+  if (!textInput) return;
+
+  // Stop any current speech
+  stopSpeech();
+
+  const engineSelect = document.getElementById('voice-engine-select');
+  currentVoiceEngine = engineSelect ? engineSelect.value : 'puter-ai';
+
+  if (currentVoiceEngine === 'puter-ai' && typeof puter !== 'undefined' && puter.ai && puter.ai.txt2speech) {
+    speakWithPuterAI(textInput);
+  } else {
+    speakWithWebSpeech(textInput);
+  }
+}
+
 function stopSpeech() {
+  // Stop Web Speech API
   if (window.speechSynthesis) {
     window.speechSynthesis.cancel();
   }
+  // Stop Puter AI audio
+  if (puterAudioElement) {
+    puterAudioElement.pause();
+    puterAudioElement.currentTime = 0;
+  }
+  // Stop uploaded audio
   if (audioElement) {
     audioElement.pause();
   }
@@ -886,6 +1001,28 @@ function setupEventListeners() {
     speechPitch.addEventListener('input', (e) => {
       const pVal = parseFloat(e.target.value);
       document.getElementById('pitch-val').textContent = pVal.toFixed(2);
+    });
+  }
+
+  // Voice Engine Selector (Puter AI vs Web Speech)
+  const engineSelect = document.getElementById('voice-engine-select');
+  if (engineSelect) {
+    engineSelect.addEventListener('change', (e) => {
+      const engine = e.target.value;
+      const webSpeechOpts = document.getElementById('web-speech-options');
+      const pitchGroup = document.getElementById('pitch-group');
+      const infoSpan = document.getElementById('voice-info');
+
+      if (engine === 'puter-ai') {
+        if (webSpeechOpts) webSpeechOpts.style.display = 'none';
+        if (pitchGroup) pitchGroup.style.display = 'none';
+        if (infoSpan) infoSpan.textContent = '🤖 Motor AI activo — Voz masculina real en TODOS los dispositivos ♂️';
+      } else {
+        if (webSpeechOpts) webSpeechOpts.style.display = 'block';
+        if (pitchGroup) pitchGroup.style.display = 'block';
+        if (infoSpan) infoSpan.textContent = '🌐 Usando voces del sistema — selecciona voz masculina';
+        populateVoiceList();
+      }
     });
   }
 
