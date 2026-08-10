@@ -55,6 +55,9 @@ let currentWordIndex = 0;
 let ttsStartTime = 0;
 let ttsEstimatedDurationMs = 0;
 
+// Global Utterance reference to prevent mobile Garbage Collection
+window.currentUtterance = null;
+
 let autoBlinkEnabled = true;
 let nextBlinkTime = 0;
 let isBlinking = false;
@@ -147,7 +150,6 @@ function handleDeviceOrientation(event) {
   const normBeta = Math.max(-1, Math.min(1, (beta - 45) / 35));
   const normGamma = Math.max(-1, Math.min(1, gamma / 35));
 
-  // Inverted Gyroscope Axis Mapping for natural tilt response
   gyroTargetX = normBeta * 0.35;
   gyroTargetY = -normGamma * 0.45;
   lastMouseMoveTime = performance.now();
@@ -393,7 +395,7 @@ function setupAudioContext() {
     analyser.smoothingTimeConstant = 0.05;
   }
   if (audioCtx.state === 'suspended') {
-    audioCtx.resume();
+    audioCtx.resume().catch(() => {});
   }
 }
 
@@ -504,7 +506,7 @@ function updateAudioLipSync(time, delta) {
   } else if (isSpeakingTTS) {
     const elapsed = performance.now() - ttsStartTime;
 
-    if (speechSynthesis.speaking && elapsed < ttsEstimatedDurationMs) {
+    if (window.speechSynthesis && window.speechSynthesis.speaking && elapsed < ttsEstimatedDurationMs) {
       const elapsedSec = elapsed / 1000;
       const syllablePulse = Math.sin(elapsedSec * 26);
       const wordEnvelope = Math.abs(Math.sin(elapsedSec * 12));
@@ -567,7 +569,7 @@ function updateAudioLipSync(time, delta) {
   }
 }
 
-// --- Bulletproof Native Web Speech API Engine ---
+// --- Bulletproof Mobile Web Speech API Engine ---
 let synth = window.speechSynthesis;
 let voices = [];
 
@@ -604,7 +606,7 @@ function populateVoiceList() {
   select.innerHTML = '';
 
   if (voices.length === 0) {
-    if (infoSpan) infoSpan.textContent = 'Cargando voces del sistema...';
+    if (infoSpan) infoSpan.textContent = 'Voces del sistema en proceso...';
     return;
   }
 
@@ -645,13 +647,21 @@ if (synth) {
   }
 }
 
+// Global Mobile Unlock Handler
+function unlockMobileSpeech() {
+  if (window.speechSynthesis) {
+    window.speechSynthesis.resume();
+  }
+}
+window.addEventListener('touchstart', unlockMobileSpeech, { passive: true });
+window.addEventListener('click', unlockMobileSpeech, { passive: true });
+
 function speakText() {
   const textInput = document.getElementById('tts-text').value.trim();
-  if (!textInput || !synth) return;
+  if (!textInput || !window.speechSynthesis) return;
 
-  setupAudioContext();
-
-  synth.cancel();
+  // Ensure speech synthesis engine is active & resumed
+  window.speechSynthesis.resume();
 
   if (voices.length === 0) {
     populateVoiceList();
@@ -661,28 +671,37 @@ function speakText() {
   currentWordIndex = 0;
 
   const utterance = new SpeechSynthesisUtterance(textInput);
-  const voiceIdx = document.getElementById('voice-select').value;
+  window.currentUtterance = utterance; // Prevent garbage collection on Mobile!
+
+  const select = document.getElementById('voice-select');
+  const voiceIdx = select ? select.value : '';
   
-  if (voices[voiceIdx]) {
-    utterance.voice = voices[voiceIdx];
-    console.log('Speaking with voice:', voices[voiceIdx].name);
+  if (voices && voices[voiceIdx]) {
+    try {
+      utterance.voice = voices[voiceIdx];
+    } catch (e) {
+      console.warn('Voice set fallback:', e);
+    }
   }
 
-  const rate = parseFloat(document.getElementById('speech-rate').value);
+  const rateInput = document.getElementById('speech-rate');
   const pitchInput = document.getElementById('speech-pitch');
+  
+  const rate = rateInput ? parseFloat(rateInput.value) : 1.0;
   const pitch = pitchInput ? parseFloat(pitchInput.value) : 0.85;
 
   utterance.rate = rate;
   utterance.pitch = pitch;
 
-  ttsEstimatedDurationMs = (textInput.length * 65) / rate + 150;
+  ttsEstimatedDurationMs = (textInput.length * 65) / rate + 200;
 
   utterance.onstart = () => {
     isSpeakingTTS = true;
     ttsStartTime = performance.now();
 
     if (window.innerWidth <= 768) {
-      document.getElementById('control-panel').classList.add('collapsed');
+      const panel = document.getElementById('control-panel');
+      if (panel) panel.classList.add('collapsed');
     }
   };
 
@@ -705,12 +724,13 @@ function speakText() {
     stopSpeech();
   };
 
-  synth.speak(utterance);
+  // Synchronously trigger speech output
+  window.speechSynthesis.speak(utterance);
 }
 
 function stopSpeech() {
-  if (synth) {
-    synth.cancel();
+  if (window.speechSynthesis) {
+    window.speechSynthesis.cancel();
   }
   if (audioElement) {
     audioElement.pause();
@@ -720,6 +740,7 @@ function stopSpeech() {
   targetJawOpen = 0;
   currentJawOpen = 0;
   setBlendShape('jawOpen', 0);
+  window.currentUtterance = null;
 }
 
 // --- Expression Presets ---
@@ -824,12 +845,17 @@ function setupEventListeners() {
     });
   });
 
-  document.getElementById('btn-speak').addEventListener('click', () => {
-    setupAudioContext();
-    speakText();
-  });
-  
-  document.getElementById('btn-stop-speak').addEventListener('click', stopSpeech);
+  const btnSpeak = document.getElementById('btn-speak');
+  if (btnSpeak) {
+    btnSpeak.addEventListener('click', () => {
+      speakText();
+    });
+  }
+
+  const btnStop = document.getElementById('btn-stop-speak');
+  if (btnStop) {
+    btnStop.addEventListener('click', stopSpeech);
+  }
 
   document.getElementById('speech-rate').addEventListener('input', (e) => {
     document.getElementById('rate-val').textContent = e.target.value;
@@ -868,7 +894,6 @@ function setupEventListeners() {
   document.querySelectorAll('.chip').forEach((chip) => {
     chip.addEventListener('click', () => {
       document.getElementById('tts-text').value = chip.getAttribute('data-phrase');
-      setupAudioContext();
       speakText();
     });
   });
