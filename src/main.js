@@ -596,6 +596,27 @@ function isMaleVoice(voice) {
   return false;
 }
 
+function findBestMaleVoiceIndex(voiceArray) {
+  if (!voiceArray || voiceArray.length === 0) return -1;
+
+  // First priority: Spanish Male Voice (Jorge, Juan, Diego, Pablo, Carlos, Mateo, etc.)
+  for (let i = 0; i < voiceArray.length; i++) {
+    const v = voiceArray[i];
+    if (v.lang.startsWith('es') && isMaleVoice(v)) {
+      return i;
+    }
+  }
+
+  // Second priority: Any Male Voice
+  for (let i = 0; i < voiceArray.length; i++) {
+    if (isMaleVoice(voiceArray[i])) {
+      return i;
+    }
+  }
+
+  return -1;
+}
+
 function populateVoiceList() {
   if (!synth) return;
   voices = synth.getVoices();
@@ -606,14 +627,14 @@ function populateVoiceList() {
   select.innerHTML = '';
 
   if (voices.length === 0) {
-    if (infoSpan) infoSpan.textContent = 'Voces del sistema en proceso...';
+    if (infoSpan) infoSpan.textContent = 'Buscando voces del sistema...';
     return;
   }
 
   const esVoices = voices.filter((v) => v.lang.startsWith('es'));
   const listToUse = esVoices.length > 0 ? esVoices : voices;
 
-  let defaultMaleIndex = -1;
+  let defaultMaleGlobalIndex = -1;
 
   listToUse.forEach((voice) => {
     const isMale = isMaleVoice(voice);
@@ -624,19 +645,19 @@ function populateVoiceList() {
     option.textContent = `${voice.name} (${voice.lang})${genderTag}`;
     option.value = globalIdx;
 
-    if (isMale && defaultMaleIndex === -1) {
-      defaultMaleIndex = globalIdx;
+    if (isMale && defaultMaleGlobalIndex === -1) {
+      defaultMaleGlobalIndex = globalIdx;
     }
 
     select.appendChild(option);
   });
 
-  if (defaultMaleIndex !== -1) {
-    select.value = defaultMaleIndex;
-    if (infoSpan) infoSpan.textContent = `Voz activa: ${voices[defaultMaleIndex].name} ♂️`;
+  if (defaultMaleGlobalIndex !== -1) {
+    select.value = defaultMaleGlobalIndex;
+    if (infoSpan) infoSpan.textContent = `Voz activa: ${voices[defaultMaleGlobalIndex].name} ♂️`;
   } else if (select.options.length > 0) {
     select.selectedIndex = 0;
-    if (infoSpan) infoSpan.textContent = `Voz activa: ${voices[select.value].name}`;
+    if (infoSpan) infoSpan.textContent = `Voz activa: ${voices[select.value].name} (Tono grave 0.70 aplicado)`;
   }
 }
 
@@ -660,8 +681,15 @@ function speakText() {
   const textInput = document.getElementById('tts-text').value.trim();
   if (!textInput || !window.speechSynthesis) return;
 
-  // Ensure speech synthesis engine is active & resumed
   window.speechSynthesis.resume();
+
+  // Re-fetch voices dynamically on touch to capture late-loading voices on iOS/Android
+  if (window.speechSynthesis.getVoices) {
+    const freshVoices = window.speechSynthesis.getVoices();
+    if (freshVoices && freshVoices.length > 0) {
+      voices = freshVoices;
+    }
+  }
 
   if (voices.length === 0) {
     populateVoiceList();
@@ -671,16 +699,26 @@ function speakText() {
   currentWordIndex = 0;
 
   const utterance = new SpeechSynthesisUtterance(textInput);
-  window.currentUtterance = utterance; // Prevent garbage collection on Mobile!
+  window.currentUtterance = utterance; // Prevent Garbage Collection on Mobile!
 
   const select = document.getElementById('voice-select');
-  const voiceIdx = select ? select.value : '';
-  
-  if (voices && voices[voiceIdx]) {
+  let selectedIdx = select ? select.value : '';
+
+  // Explicitly search and force a male voice if current selection is not male
+  if (!selectedIdx || !voices[selectedIdx] || !isMaleVoice(voices[selectedIdx])) {
+    const maleIdx = findBestMaleVoiceIndex(voices);
+    if (maleIdx !== -1) {
+      selectedIdx = maleIdx;
+      if (select) select.value = maleIdx;
+    }
+  }
+
+  if (voices && voices[selectedIdx]) {
     try {
-      utterance.voice = voices[voiceIdx];
+      utterance.voice = voices[selectedIdx];
+      console.log('Using selected voice:', voices[selectedIdx].name);
     } catch (e) {
-      console.warn('Voice set fallback:', e);
+      console.warn('Voice assign warning:', e);
     }
   }
 
@@ -688,7 +726,9 @@ function speakText() {
   const pitchInput = document.getElementById('speech-pitch');
   
   const rate = rateInput ? parseFloat(rateInput.value) : 1.0;
-  const pitch = pitchInput ? parseFloat(pitchInput.value) : 0.85;
+  // If selected voice is male, keep pitch natural (0.95); if non-male fallback, pitch shift (0.70)
+  const isSelectedMale = voices[selectedIdx] ? isMaleVoice(voices[selectedIdx]) : false;
+  const pitch = pitchInput ? parseFloat(pitchInput.value) : (isSelectedMale ? 0.95 : 0.70);
 
   utterance.rate = rate;
   utterance.pitch = pitch;
@@ -724,8 +764,29 @@ function speakText() {
     stopSpeech();
   };
 
-  // Synchronously trigger speech output
   window.speechSynthesis.speak(utterance);
+}
+
+function forceMaleVoiceSelection() {
+  if (window.speechSynthesis) {
+    const fresh = window.speechSynthesis.getVoices();
+    if (fresh && fresh.length > 0) voices = fresh;
+  }
+
+  populateVoiceList();
+
+  const maleIdx = findBestMaleVoiceIndex(voices);
+  const select = document.getElementById('voice-select');
+  const infoSpan = document.getElementById('voice-info');
+
+  if (maleIdx !== -1 && select) {
+    select.value = maleIdx;
+    if (infoSpan) infoSpan.textContent = `Voz masculina activada: ${voices[maleIdx].name} ♂️`;
+    alert(`¡Voz Masculina Activada!\nSe seleccionó "${voices[maleIdx].name}".`);
+  } else {
+    if (infoSpan) infoSpan.textContent = `Se aplicó modulación grave masculina (Pitch 0.70)`;
+    alert(`Nota de Voz en Teléfono:\nSe aplicó la modulación masculina grave (Pitch 0.70).\n\n💡 Tip: Para agregar más voces masculinas nativas en tu celular, ve a los Ajustes de tu teléfono > Accesibilidad > Contenido Leído > Voces y descarga "Jorge" o "Juan".`);
+  }
 }
 
 function stopSpeech() {
@@ -849,6 +910,13 @@ function setupEventListeners() {
   if (btnSpeak) {
     btnSpeak.addEventListener('click', () => {
       speakText();
+    });
+  }
+
+  const btnForceMale = document.getElementById('btn-force-male-voice');
+  if (btnForceMale) {
+    btnForceMale.addEventListener('click', () => {
+      forceMaleVoiceSelection();
     });
   }
 
