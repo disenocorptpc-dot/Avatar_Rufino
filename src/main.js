@@ -17,15 +17,23 @@ let spineBone = null;
 let initialHeadRot = new THREE.Euler();
 let initialNeckRot = new THREE.Euler();
 
-// Motion Toggles & Mouse Tracking State
+// Motion Toggles & Tracking State
 let mouseX = 0;
 let mouseY = 0;
 let targetHeadRotY = 0;
 let targetHeadRotX = 0;
+
 let enableMouseTracking = true;
 let enableIdleMotion = true;
+let enableGyroscope = true;
+
 let lastMouseMoveTime = 0;
-const MOUSE_IDLE_TIMEOUT = 2200; // Return to center after 2.2 seconds of mouse inactivity
+const MOUSE_IDLE_TIMEOUT = 2200; // Return to center after 2.2s idle
+
+// Mobile Gyroscope State
+let gyroTargetX = 0;
+let gyroTargetY = 0;
+let isGyroActive = false;
 
 // Audio & Lip-Sync State
 let audioCtx = null;
@@ -39,7 +47,7 @@ let isMicActive = false;
 let isSpeakingTTS = false;
 let isPlayingAudioFile = false;
 
-// Precise Lip-Sync State Variables
+// Precise Lip-Sync Variables
 let targetJawOpen = 0;
 let currentJawOpen = 0;
 let ttsWords = [];
@@ -68,7 +76,7 @@ function initScene() {
     0.1,
     100
   );
-  // Default camera starting position (Torso View)
+  // Default camera starting position: Torso View
   camera.position.set(0, 1.1, 1.8);
 
   renderer = new THREE.WebGLRenderer({ antialias: true, preserveDrawingBuffer: true });
@@ -92,12 +100,56 @@ function initScene() {
 
   window.addEventListener('resize', onWindowResize);
   window.addEventListener('mousemove', onMouseMove);
+  window.addEventListener('touchmove', onTouchMove, { passive: true });
+
+  initGyroscope();
 }
 
 function onMouseMove(event) {
   mouseX = (event.clientX / window.innerWidth) * 2 - 1;
   mouseY = -(event.clientY / window.innerHeight) * 2 + 1;
-  lastMouseMoveTime = performance.now(); // Record active mouse movement timestamp
+  lastMouseMoveTime = performance.now();
+}
+
+function onTouchMove(event) {
+  if (event.touches.length > 0) {
+    const touch = event.touches[0];
+    mouseX = (touch.clientX / window.innerWidth) * 2 - 1;
+    mouseY = -(touch.clientY / window.innerHeight) * 2 + 1;
+    lastMouseMoveTime = performance.now();
+  }
+}
+
+// --- Mobile Gyroscope Device Orientation ---
+function initGyroscope() {
+  if (window.DeviceOrientationEvent) {
+    // Check iOS 13+ permission requirement
+    if (typeof DeviceOrientationEvent.requestPermission === 'function') {
+      const btnReq = document.getElementById('btn-request-gyro');
+      if (btnReq) btnReq.style.display = 'block';
+    } else {
+      window.addEventListener('deviceorientation', handleDeviceOrientation, true);
+    }
+  }
+}
+
+function handleDeviceOrientation(event) {
+  if (!enableGyroscope) return;
+
+  const beta = event.beta;   // Pitch (-180 to 180, resting phone ~45 deg)
+  const gamma = event.gamma; // Roll (-90 to 90)
+
+  if (beta === null || gamma === null) return;
+
+  isGyroActive = true;
+
+  // Center beta around normal reading angle (~45 deg)
+  const normBeta = Math.max(-1, Math.min(1, (beta - 45) / 35));
+  const normGamma = Math.max(-1, Math.min(1, gamma / 35));
+
+  gyroTargetX = -normBeta * 0.35;
+  gyroTargetY = normGamma * 0.45;
+  lastMouseMoveTime = performance.now();
 }
 
 function setupLights() {
@@ -215,7 +267,7 @@ function loadAvatar() {
 
       scene.add(avatarModel);
 
-      // Default Camera View on Startup: TORSO (Upper Body View)
+      // Default Camera View: TORSO
       const torsoY = avatarModel.position.y + size.y * 0.55;
       controls.target.set(0, torsoY, 0);
       camera.position.set(0, torsoY, 1.8);
@@ -259,7 +311,7 @@ function setBlendShape(name, value) {
   }
 }
 
-// --- Bone Animations (Head Sway, Mouse Tracking, Smooth Idle Return) ---
+// --- Bone Animations (Head Sway, Mouse/Touch Tracking, Gyroscope & Idle Return) ---
 function updateBoneAnimations(time, delta) {
   if (!headBone && !neckBone) return;
 
@@ -273,14 +325,18 @@ function updateBoneAnimations(time, delta) {
     idleHeadZ = Math.sin(time * 1.1) * 0.015;
   }
 
-  // Smart Mouse Tracking: Smoothly return to center when mouse stays still for > 2.2s
-  const isMouseActive = (performance.now() - lastMouseMoveTime) < MOUSE_IDLE_TIMEOUT;
+  const isInputActive = (performance.now() - lastMouseMoveTime) < MOUSE_IDLE_TIMEOUT;
 
-  if (enableMouseTracking && isMouseActive) {
+  if (enableGyroscope && isGyroActive) {
+    // Gyroscope tracking on mobile devices
+    targetHeadRotX = THREE.MathUtils.lerp(targetHeadRotX, gyroTargetX, delta * 3.5);
+    targetHeadRotY = THREE.MathUtils.lerp(targetHeadRotY, gyroTargetY, delta * 3.5);
+  } else if (enableMouseTracking && isInputActive) {
+    // Mouse / Touch tracking
     targetHeadRotY = THREE.MathUtils.lerp(targetHeadRotY, mouseX * 0.35, delta * 3.5);
     targetHeadRotX = THREE.MathUtils.lerp(targetHeadRotX, -mouseY * 0.25, delta * 3.5);
   } else {
-    // Return smoothly to natural front-facing orientation when mouse is stationary
+    // Smooth Return to Center when idle
     targetHeadRotY = THREE.MathUtils.lerp(targetHeadRotY, 0, delta * 2.0);
     targetHeadRotX = THREE.MathUtils.lerp(targetHeadRotX, 0, delta * 2.0);
   }
@@ -404,7 +460,7 @@ function handleAudioFileUpload(file) {
   audioElement.play();
 }
 
-// Calculate Vowel Weight
+// Vowel Weight
 function getVowelWeight(char) {
   const c = char.toLowerCase();
   if (['a', 'o', 'á', 'ó'].includes(c)) return 0.85;
@@ -565,7 +621,11 @@ function speakText() {
   utterance.onstart = () => {
     isSpeakingTTS = true;
     ttsStartTime = performance.now();
-    console.log('Speech started, duration limit:', ttsEstimatedDurationMs, 'ms');
+
+    // Auto-collapse panel on mobile when speaking to show 3D avatar
+    if (window.innerWidth <= 768) {
+      document.getElementById('control-panel').classList.add('collapsed');
+    }
   };
 
   utterance.onboundary = (event) => {
@@ -677,6 +737,22 @@ function initBlendshapeSliders() {
 
 // --- Event Listeners Setup ---
 function setupEventListeners() {
+  // Mobile Panel Expand/Collapse Toggle
+  const panel = document.getElementById('control-panel');
+  const panelHandle = document.getElementById('panel-handle');
+  const btnTogglePanel = document.getElementById('btn-toggle-panel');
+
+  const togglePanel = () => {
+    panel.classList.toggle('collapsed');
+  };
+
+  if (panelHandle) panelHandle.addEventListener('click', togglePanel);
+  if (btnTogglePanel) btnTogglePanel.addEventListener('click', (e) => {
+    e.stopPropagation();
+    togglePanel();
+  });
+
+  // Navigation Tabs
   document.querySelectorAll('.tab-btn').forEach((btn) => {
     btn.addEventListener('click', () => {
       document.querySelectorAll('.tab-btn').forEach((b) => b.classList.remove('active'));
@@ -715,6 +791,33 @@ function setupEventListeners() {
   document.getElementById('mic-toggle').addEventListener('change', (e) => {
     toggleMicrophone(e.target.checked);
   });
+
+  // Gyroscope Toggle Switch
+  const gyroToggle = document.getElementById('gyro-toggle');
+  if (gyroToggle) {
+    gyroToggle.addEventListener('change', (e) => {
+      enableGyroscope = e.target.checked;
+    });
+  }
+
+  // iOS Gyroscope Permission Button
+  const btnReqGyro = document.getElementById('btn-request-gyro');
+  if (btnReqGyro) {
+    btnReqGyro.addEventListener('click', async () => {
+      if (typeof DeviceOrientationEvent.requestPermission === 'function') {
+        try {
+          const state = await DeviceOrientationEvent.requestPermission();
+          if (state === 'granted') {
+            window.addEventListener('deviceorientation', handleDeviceOrientation, true);
+            btnReqGyro.style.display = 'none';
+            alert('¡Giroscopio activado con éxito!');
+          }
+        } catch (err) {
+          console.error(err);
+        }
+      }
+    });
+  }
 
   const mouseTrackToggle = document.getElementById('mouse-track-toggle');
   if (mouseTrackToggle) {
